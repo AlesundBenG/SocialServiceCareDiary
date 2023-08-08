@@ -54,7 +54,7 @@ FROM WM_ACTDOCUMENTS documentIPPSU --Документы ИППСУ.
         ON addition.A_DOCUMENT = documentAddition.OUID
             AND addition.A_STATUS = @activeStatus
 WHERE documentIPPSU.OUID IN (
-    0
+    11807720
 )
 
 ------------------------------------------------------------------------------------------------------------------------------
@@ -90,7 +90,7 @@ WHERE created.TABLE_NAME = 'WM_ACTDOCUMENTS'
 ------------------------------------------------------------------------------------------------------------------------------
 
 --Создание содержимого дневника ухода.
-INSERT INTO CARE_DIARY (GUID, A_CREATEDATE, A_CROWNER, A_STATUS, DOCUMENT_OUID, LEVEL_OF_NEED, DOCUMENT_IPPSU)
+INSERT INTO CARE_DIARY (GUID, A_CREATEDATE, A_STATUS, DOCUMENT_OUID, LEVEL_OF_NEED, DOCUMENT_IPPSU)
 OUTPUT inserted.GUID, inserted.A_OUID , 'CARE_DIARY' INTO #CREATED (GUID, OUID, TABLE_NAME) --Записываем в лог вставленные записи.
 SELECT
     NEWID()                         AS GUID,
@@ -102,7 +102,7 @@ SELECT
 FROM #DESCRIPTOR_CREATION descriptor --Дескриптор создания.
 ----Содержимое ИППСУ.
     INNER JOIN INDIVID_PROGRAM IPPSU
-        ON IPPSU.A_DOC = descriptor.IPPSU_INFO
+        ON IPPSU.A_OUID = descriptor.IPPSU_INFO
 
 --Запись вставленных идентификаторов.
 UPDATE descriptor
@@ -120,6 +120,7 @@ WHERE created.TABLE_NAME = 'CARE_DIARY'
 
 --Заполнение "Основные цели ухода".
 INSERT INTO CARE_DIARY_PURPOSE (A_CREATEDATE, A_STATUS, PURPOSE_TYPE, CARE_DIARY_OUID)
+OUTPUT NULL, inserted.A_OUID , 'CARE_DIARY_PURPOSE' INTO #CREATED (GUID, OUID, TABLE_NAME) --Записываем в лог вставленные записи.
 SELECT
     GETDATE()                   AS A_CREATEDATE,
     @activeStatus               AS A_STATUS,
@@ -134,6 +135,7 @@ FROM #DESCRIPTOR_CREATION descriptor  --Дескриптор создания.
 
 --Заполнение "Перечень медицинских рекомендаций".
 INSERT INTO CARE_DIARY_RECOMMENDATION (A_CREATEDATE, A_STATUS, RECOMMENDATION_TYPE, CARE_DIARY_OUID)
+OUTPUT NULL, inserted.A_OUID , 'CARE_DIARY_RECOMMENDATION' INTO #CREATED (GUID, OUID, TABLE_NAME) --Записываем в лог вставленные записи.
 SELECT
     GETDATE()                   AS A_CREATEDATE,
     @activeStatus               AS A_STATUS,
@@ -148,6 +150,7 @@ FROM #DESCRIPTOR_CREATION descriptor  --Дескриптор создания.
 
 --Заполнение "Индивидуальные особенности гражданина".
 INSERT INTO CARE_DIARY_FEATURES (A_CREATEDATE, A_STATUS, FEATURES_TYPE, CARE_DIARY_OUID)
+OUTPUT NULL, inserted.A_OUID , 'CARE_DIARY_FEATURES' INTO #CREATED (GUID, OUID, TABLE_NAME) --Записываем в лог вставленные записи.
 SELECT
     GETDATE()                   AS A_CREATEDATE,
     @activeStatus               AS A_STATUS,
@@ -162,6 +165,7 @@ FROM #DESCRIPTOR_CREATION descriptor  --Дескриптор создания.
 
 --Заполнение графика работы.
 INSERT INTO CARE_DIARY_WORK_PLAN (A_CREATEDATE, A_STATUS, VISIT_NUMBER, VISIT_TIME_START, VISIT_TIME_END, MONDAY, TUESDAY, WEDNESDAY, THURSDAY, FRIDAY, SATURDAY, SUNDAY, CARE_DIARY_OUID)
+OUTPUT NULL, inserted.A_OUID , 'CARE_DIARY_WORK_PLAN' INTO #CREATED (GUID, OUID, TABLE_NAME) --Записываем в лог вставленные записи.
 SELECT
     GETDATE()                                       AS A_CREATEDATE,
     @activeStatus                                   AS A_STATUS,
@@ -219,3 +223,13 @@ FROM (
         ON workPlan.CARE_DIARY_OUID = maxCountVisitOnDay.CARE_DIARY_INFO
 
 ------------------------------------------------------------------------------------------------------------------------------
+
+--Дескрипторы.
+SELECT
+*
+FROM #DESCRIPTOR_CREATION descriptor  --Дескриптор создания.
+
+--Созданные данные.
+SELECT 
+    * 
+FROM #CREATED
