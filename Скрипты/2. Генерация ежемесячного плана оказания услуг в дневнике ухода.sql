@@ -28,10 +28,14 @@ IF OBJECT_ID('tempdb..#MONTH_PLAN') IS NOT NULL BEGIN DROP TABLE #MONTH_PLAN    
 
 --Создание временных таблиц.
 CREATE TABLE #MONTH_INFO (
-    DAY_NUMBER  INT,    --День месяца.
-    DAY_OF_WEEK INT,    --День недели.
-    WEEK_NUMBER INT,    --Номер недели.
-
+    WEEK_NUMBER     INT,    --Номер недели.
+    MONDAY_DATE     DATE,   --Дата понедельника.
+    TUESDAY_DATE    DATE,   --Дата вторника.
+    WEDNESDAY_DATE  DATE,   --Дата среды.
+    THURSDAY_DATE   DATE,   --Дата четверга.
+    FRIDAY_DATE     DATE,   --Дата пятницы.
+    SATURDAY_DATE   DATE,   --Дата субботы.
+    SUNDAY_DATE     DATE,   --Дата воскресенья.
 )
 CREATE TABLE #DOCUMENTS (
     OUID        INT,    --Идентификатор.
@@ -70,20 +74,37 @@ CREATE TABLE #MONTH_PLAN (
 DECLARE @tempDate       DATE    = @monthDateStart           --Итератор.
 DECLARE @tempDayOfWeek  INT     = DATEPART(DW, @tempDate)   --День недели итератора.
 DECLARE @tempNumberWeek INT     = 1                         --Номер недели итератора.
+DECLARE @numberWeek     INT     = 1
+DECLARE @dateWeekEnd    DATE    
+DECLARE @query          NVARCHAR(MAX)   = '' --Для запроса.
+
 
 --Цикл формирования информации об месяце.
 WHILE @tempDate <= @monthDateEnd BEGIN
     --Вставка информации.
-    INSERT INTO #MONTH_INFO (DAY_NUMBER, DAY_OF_WEEK, WEEK_NUMBER)
-    VALUES (DAY(@tempDate), @tempDayOfWeek, @tempNumberWeek)
-    --Итерация.
-    SET @tempDate = DATEADD(DAY, 1, @tempDate)
-    IF @tempDayOfWeek = 7 BEGIN
-        SET @tempNumberWeek = CASE WHEN @tempNumberWeek = 5 THEN 1 ELSE @tempNumberWeek + 1 END --Может быть шестая неделя, которая идет в учет первой.
-        SET @tempDayOfWeek = 1
-    END ELSE BEGIN
-        SET @tempDayOfWeek = @tempDayOfWeek + 1
+    INSERT INTO #MONTH_INFO (WEEK_NUMBER)
+    VALUES (@numberWeek)
+    --Заполнение недели.
+    SET @dateWeekEnd = dbo.fs_getLastDayOfWeek(@tempDate)
+    WHILE @tempDate <= @dateWeekEnd AND @tempDate <= @monthDateEnd BEGIN
+        SET @query = '
+            UPDATE #MONTH_INFO
+            SET ' +
+                CASE DATEPART(DW, @tempDate)
+                    WHEN 1 THEN 'MONDAY_DATE'
+                    WHEN 2 THEN 'TUESDAY_DATE'
+                    WHEN 3 THEN 'WEDNESDAY_DATE'
+                    WHEN 4 THEN 'THURSDAY_DATE'
+                    WHEN 5 THEN 'FRIDAY_DATE'
+                    WHEN 6 THEN 'SATURDAY_DATE'
+                    WHEN 7 THEN 'SUNDAY_DATE'
+                END + ' = ''' + CONVERT(VARCHAR, @tempDate, 104) + '''
+            WHERE WEEK_NUMBER = '  + CONVERT(VARCHAR, @numberWeek)
+        EXEC SP_EXECUTESQL @query
+        SET @tempDate = DATEADD(DAY, 1, @tempDate)
     END
+    --Переход к следующей неделе.
+    SET @numberWeek = @numberWeek + 1
 END
 
 --------------------------------------------------------------------------------------------------------------------------------
@@ -172,46 +193,47 @@ FROM #SERV_SDU
 --------------------------------------------------------------------------------------------------------------------------------
 
 --Формирование плана.
-DECLARE @numberDay INT = 1
-DECLARE @dayOfWeek INT = (SELECT DAY_OF_WEEK FROM #MONTH_INFO WHERE DAY_NUMBER = @numberDay)
+SET @numberWeek = 1
+DECLARE @numberWeekMax  INT = (SELECT MAX(WEEK_NUMBER) FROM #MONTH_INFO)
+DECLARE @expression VARCHAR(MAX)
 
-DECLARE @query NVARCHAR(MAX) = ''
-WHILE @numberDay <= DAY(@monthDateEnd) BEGIN
+WHILE @numberWeek <= @numberWeekMax BEGIN
+    --Выражение для обновления полей.
+    SET @expression = (
+        SELECT
+            dbo.fs_concatenateString(dbo.fs_concatenateString(dbo.fs_concatenateString(dbo.fs_concatenateString(dbo.fs_concatenateString(dbo.fs_concatenateString(
+                'mP.DAY_' + CONVERT(VARCHAR, DAY(MONDAY_DATE))    + ' = CASE WHEN ISNULL(serv.A_MONDAY, 0) = 1 AND '    + CONVERT(VARCHAR, DAY(MONDAY_DATE))  + ' BETWEEN mP.FIRST_DAY_OF_MONTH AND mP.LAST_DAY_OF_MONTH THEN serv.A_PERIOD_DAY END', 
+                'mP.DAY_' + CONVERT(VARCHAR, DAY(TUESDAY_DATE))   + ' = CASE WHEN ISNULL(serv.A_TUESDAY, 0) = 1 AND '   + CONVERT(VARCHAR, DAY(TUESDAY_DATE)) + ' BETWEEN mP.FIRST_DAY_OF_MONTH AND mP.LAST_DAY_OF_MONTH THEN serv.A_PERIOD_DAY END', ','), 
+                'mP.DAY_' + CONVERT(VARCHAR, DAY(WEDNESDAY_DATE)) + ' = CASE WHEN ISNULL(serv.A_WEDNESDAY, 0) = 1 AND ' + CONVERT(VARCHAR, DAY(WEDNESDAY_DATE)) + ' BETWEEN mP.FIRST_DAY_OF_MONTH AND mP.LAST_DAY_OF_MONTH THEN serv.A_PERIOD_DAY END', ','),
+                'mP.DAY_' + CONVERT(VARCHAR, DAY(THURSDAY_DATE))  + ' = CASE WHEN ISNULL(serv.A_THURSDAY, 0) = 1 AND '  + CONVERT(VARCHAR, DAY(THURSDAY_DATE))  + ' BETWEEN mP.FIRST_DAY_OF_MONTH AND mP.LAST_DAY_OF_MONTH THEN serv.A_PERIOD_DAY END', ','),
+                'mP.DAY_' + CONVERT(VARCHAR, DAY(FRIDAY_DATE))    + ' = CASE WHEN ISNULL(serv.A_FRIDAY, 0) = 1 AND '    + CONVERT(VARCHAR, DAY(FRIDAY_DATE))    + ' BETWEEN mP.FIRST_DAY_OF_MONTH AND mP.LAST_DAY_OF_MONTH THEN serv.A_PERIOD_DAY END', ','),
+                'mP.DAY_' + CONVERT(VARCHAR, DAY(SATURDAY_DATE))  + ' = CASE WHEN ISNULL(serv.A_SATURDAY, 0) = 1 AND '  + CONVERT(VARCHAR, DAY(SATURDAY_DATE))  + ' BETWEEN mP.FIRST_DAY_OF_MONTH AND mP.LAST_DAY_OF_MONTH THEN serv.A_PERIOD_DAY END', ','),
+                'mP.DAY_' + CONVERT(VARCHAR, DAY(SUNDAY_DATE))    + ' = CASE WHEN ISNULL(serv.A_SUNDAY, 0) = 1 AND '    + CONVERT(VARCHAR, DAY(SUNDAY_DATE))    +' BETWEEN mP.FIRST_DAY_OF_MONTH AND mP.LAST_DAY_OF_MONTH THEN serv.A_PERIOD_DAY END', ','
+            )
+        FROM #MONTH_INFO
+        WHERE WEEK_NUMBER = @numberWeek
+    )
     SET @query = '
-        UPDATE monthPlan
-        SET monthPlan.DAY_' + CONVERT(VARCHAR, @numberDay) + ' = servSDU.A_PERIOD_DAY 
+        UPDATE mP
+        SET ' + @expression + '        
         FROM #MONTH_INFO monthInfo
         ----Планы на месяц.
-            INNER JOIN #MONTH_PLAN monthPlan
-                ON monthInfo.DAY_NUMBER BETWEEN monthPlan.FIRST_DAY_OF_MONTH AND monthPlan.LAST_DAY_OF_MONTH                       
+            CROSS JOIN #MONTH_PLAN mP            
         ----Услуги, попадающие под указанный день.
-            INNER JOIN SOCSERV_INDIVIDPROGRAM_ADDITION servSDU 
-                ON servSDU.A_IPPSU_ADDITION = monthPlan.ADDITION_OUID
-                    AND servSDU.A_SOC_SERV = monthPlan.SERV_SDU
-                    AND servSDU.A_STATUS = 10
-                    AND servSDU.A_WEEK_NUM = monthInfo.WEEK_NUMBER
-                    AND ISNULL(servSDU.A_SOCSERV_NOT_NEED, 0) = 0
-                    AND ' + 
-                        CASE @dayOfWeek 
-                            WHEN 1 THEN 'ISNULL(servSDU.A_MONDAY, 0)'
-                            WHEN 2 THEN 'ISNULL(servSDU.A_TUESDAY, 0)' 
-                            WHEN 3 THEN 'ISNULL(servSDU.A_WEDNESDAY, 0)' 
-                            WHEN 4 THEN 'ISNULL(servSDU.A_THURSDAY, 0)' 
-                            WHEN 5 THEN 'ISNULL(servSDU.A_FRIDAY, 0)' 
-                            WHEN 6 THEN 'ISNULL(servSDU.A_SATURDAY, 0)'
-                            WHEN 7 THEN 'ISNULL(servSDU.A_SUNDAY, 0)'
-                            ELSE '0'
-                        END + ' = 1
-        WHERE monthInfo.DAY_NUMBER = ' + CONVERT(VARCHAR, @numberDay) 
+            INNER JOIN SOCSERV_INDIVIDPROGRAM_ADDITION serv 
+                ON serv.A_IPPSU_ADDITION = mP.ADDITION_OUID
+                    AND serv.A_SOC_SERV = mP.SERV_SDU
+                    AND serv.A_STATUS = 10
+                    AND serv.A_WEEK_NUM = monthInfo.WEEK_NUMBER
+        WHERE monthInfo.WEEK_NUMBER = ' + CONVERT(VARCHAR, @numberWeek) 
     EXEC SP_EXECUTESQL @query
-    SET @numberDay = @numberDay + 1
-    SET @dayOfWeek = (SELECT DAY_OF_WEEK FROM #MONTH_INFO WHERE DAY_NUMBER = @numberDay)
+    SET @numberWeek = @numberWeek + 1
 END
 
 SELECT * FROM #MONTH_PLAN
 
 --------------------------------------------------------------------------------------------------------------------------------
-
+/*
 --Вставка заголовков.
 INSERT INTO CARE_DIARY_REPORT (YEAR, MONTH, CARE_DIARY_OUID,
     DAY_1_ALL,  DAY_2_ALL,  DAY_3_ALL,  DAY_4_ALL,  DAY_5_ALL,  DAY_6_ALL,  DAY_7_ALL, 
@@ -275,3 +297,4 @@ SELECT
 FROM #MONTH_PLAN
 
 --------------------------------------------------------------------------------------------------------------------------------
+*/
