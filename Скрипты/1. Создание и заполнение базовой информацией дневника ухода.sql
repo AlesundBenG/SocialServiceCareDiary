@@ -164,14 +164,12 @@ FROM #DESCRIPTOR_CREATION descriptor  --Дескриптор создания.
 ------------------------------------------------------------------------------------------------------------------------------
 
 --Заполнение графика работы.
-INSERT INTO CARE_DIARY_WORK_PLAN (A_CREATEDATE, A_STATUS, VISIT_NUMBER, VISIT_TIME_START, VISIT_TIME_END, MONDAY, TUESDAY, WEDNESDAY, THURSDAY, FRIDAY, SATURDAY, SUNDAY, CARE_DIARY_OUID)
+INSERT INTO CARE_DIARY_WORK_PLAN (A_CREATEDATE, A_STATUS, VISIT_NUMBER, MONDAY, TUESDAY, WEDNESDAY, THURSDAY, FRIDAY, SATURDAY, SUNDAY, CARE_DIARY_OUID)
 OUTPUT NULL, inserted.A_OUID , 'CARE_DIARY_WORK_PLAN' INTO #CREATED (GUID, OUID, TABLE_NAME) --Записываем в лог вставленные записи.
 SELECT
     GETDATE()                                       AS A_CREATEDATE,
     @activeStatus                                   AS A_STATUS,
     visit.NUMBER                                    AS VISIT_NUMBER,
-    CONVERT(DATE, careDiary.ISSUEEXTENSIONSDATE)    AS VISIT_TIME_START,
-    CONVERT(DATE, careDiary.ISSUEEXTENSIONSDATE)    AS VISIT_TIME_END,
     0                                               AS MONDAY,
     0                                               AS TUESDAY,
     0                                               AS WEDNESDAY,
