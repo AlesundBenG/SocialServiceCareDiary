@@ -155,6 +155,7 @@ FROM #DOCUMENTS careDiaryDoc --Документ дневника ухода.
     INNER JOIN CARE_DIARY careDiaryInfo
         ON careDiaryInfo.DOCUMENT_OUID = careDiaryDoc.OUID
             AND careDiaryInfo.A_STATUS = 10
+            AND careDiaryInfo.A_OUID = 4360
 ----Документ ИППСУ.
     INNER JOIN #DOCUMENTS docIPPSU
         ON docIPPSU.OUID = careDiaryInfo.DOCUMENT_IPPSU
@@ -175,6 +176,7 @@ FROM #DOCUMENTS careDiaryDoc --Документ дневника ухода.
             AND servSDU.A_STATUS = 10
             AND ISNULL(servSDU.A_SOCSERV_NOT_NEED, 0) = 0
 WHERE careDiaryDoc.TYPE = 4404   --Дневник ухода.
+    
 
 ------------------------------------------------------------------------------------------------------------------------------
 
@@ -228,8 +230,6 @@ WHILE @numberWeek <= @numberWeekMax BEGIN
     EXEC SP_EXECUTESQL @query
     SET @numberWeek = @numberWeek + 1
 END
-
-SELECT * FROM #MONTH_PLAN
 
 --------------------------------------------------------------------------------------------------------------------------------
 
