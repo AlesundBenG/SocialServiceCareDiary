@@ -132,7 +132,6 @@ WHERE document.A_STATUS = 10
         3883,   --Индивидуальная программа предоставления социальных услуг.
         4388    --Дополнение к индивидуальной программе предоставления социальных услуг.
     )
-    AND personalCard.OUID = 870030
 
 --------------------------------------------------------------------------------------------------------------------------------
 
@@ -225,7 +224,7 @@ WHILE @numberWeek <= @numberWeekMax BEGIN
                     AND serv.A_SOC_SERV = mP.SERV_SDU
                     AND serv.A_STATUS = 10
                     AND serv.A_WEEK_NUM = monthInfo.WEEK_NUMBER
-        WHERE monthInfo.WEEK_NUMBER = ' + CONVERT(VARCHAR, @numberWeek) 
+        WHERE monthInfo.WEEK_NUMBER = ' + CONVERT(VARCHAR, CASE WHEN @numberWeek <= 5 THEN @numberWeek ELSE @numberWeek - 5 END) --Если 6 недель, то 6 неделя считается первой.
     EXEC SP_EXECUTESQL @query
     SET @numberWeek = @numberWeek + 1
 END
@@ -233,7 +232,7 @@ END
 SELECT * FROM #MONTH_PLAN
 
 --------------------------------------------------------------------------------------------------------------------------------
-/*
+
 --Вставка заголовков.
 INSERT INTO CARE_DIARY_REPORT (YEAR, MONTH, CARE_DIARY_OUID,
     DAY_1_ALL,  DAY_2_ALL,  DAY_3_ALL,  DAY_4_ALL,  DAY_5_ALL,  DAY_6_ALL,  DAY_7_ALL, 
@@ -247,7 +246,7 @@ SELECT DISTINCT
     @year                       AS YEAR,
     @month                      AS MONTH,
     monthPlan.CARE_DIARY_OUID   AS CARE_DIARY_OUID,
-    --Функция SUM игнорирует NULl, поэтому на NULL не проверяем для производительности
+    --Функция SUM игнорирует NULl, поэтому на NULL не проверяем для производительности.
     SUM(monthPlan.DAY_1)  AS DAY_1_ALL,  SUM(monthPlan.DAY_2)  AS DAY_2_ALL,  SUM(monthPlan.DAY_3)  AS DAY_3_ALL,  
     SUM(monthPlan.DAY_4)  AS DAY_4_ALL,  SUM(monthPlan.DAY_5)  AS DAY_5_ALL,  SUM(monthPlan.DAY_6)  AS DAY_6_ALL,  
     SUM(monthPlan.DAY_7)  AS DAY_7_ALL,  SUM(monthPlan.DAY_8)  AS DAY_8_ALL,  SUM(monthPlan.DAY_9)  AS DAY_9_ALL,  
@@ -297,4 +296,3 @@ SELECT
 FROM #MONTH_PLAN
 
 --------------------------------------------------------------------------------------------------------------------------------
-*/
