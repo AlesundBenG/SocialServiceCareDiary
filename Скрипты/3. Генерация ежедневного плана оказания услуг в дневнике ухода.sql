@@ -51,6 +51,7 @@ SET @query = '
         report.DAY_' +  CONVERT(VARCHAR, @day) + '_ALL  AS COUNT_IN_DAY
     FROM CARE_DIARY_REPORT report --План-отчет предоставления услуг СДУ из дневника ухода.
     WHERE report.A_STATUS = 10
+        AND report.ROW_TYPE = 2
         AND report.YEAR = ' + CONVERT(VARCHAR, @year) + '
         AND report.MONTH = ' + CONVERT(VARCHAR, @month) + '
         AND ISNULL(DAY_' + CONVERT(VARCHAR, @day) + '_ALL, 0) > 0'

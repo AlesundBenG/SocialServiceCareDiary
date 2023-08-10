@@ -142,8 +142,12 @@ SELECT DISTINCT
     infoIPPSU.A_OUID            AS IPPSU_OUID,
     additionInfo.A_OUID         AS ADDITION_OUID,
     servSDU.A_SOC_SERV          AS SERV_SDU,
-    servSDU.A_VOLUME_DAY        AS EXECUTE_TIME,
-    servSDU.A_PERIOD_DAY        AS COUNT_IN_DAY,
+    CASE 
+        WHEN ISNULL(servSDU.A_PERIOD_DAY, 0) <> 0 
+        THEN servSDU.A_VOLUME_DAY / servSDU.A_PERIOD_DAY 
+        ELSE 0
+    END                     AS EXECUTE_TIME,
+    servSDU.A_PERIOD_DAY    AS COUNT_IN_DAY,
     CASE WHEN @monthDateStart < CONVERT(DATE, careDiaryDoc.DATE_START)
         THEN DAY(careDiaryDoc.DATE_START) ELSE 1
     END AS FIRST_DAY_OF_MONTH,
@@ -155,7 +159,6 @@ FROM #DOCUMENTS careDiaryDoc --Документ дневника ухода.
     INNER JOIN CARE_DIARY careDiaryInfo
         ON careDiaryInfo.DOCUMENT_OUID = careDiaryDoc.OUID
             AND careDiaryInfo.A_STATUS = 10
-            AND careDiaryInfo.A_OUID = 1
 ----Документ ИППСУ.
     INNER JOIN #DOCUMENTS docIPPSU
         ON docIPPSU.OUID = careDiaryInfo.DOCUMENT_IPPSU
@@ -176,7 +179,6 @@ FROM #DOCUMENTS careDiaryDoc --Документ дневника ухода.
             AND servSDU.A_STATUS = 10
             AND ISNULL(servSDU.A_SOCSERV_NOT_NEED, 0) = 0
 WHERE careDiaryDoc.TYPE = 4404   --Дневник ухода.
-    
 
 ------------------------------------------------------------------------------------------------------------------------------
 
