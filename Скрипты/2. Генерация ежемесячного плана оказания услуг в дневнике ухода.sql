@@ -11,8 +11,8 @@
 ------------------------------------------------------------------------------------------------------------------------------
 
 --Параметры.
-DECLARE @year           INT = 2023
-DECLARE @month          INT = 8
+DECLARE @year           INT = #year#
+DECLARE @month          INT = #month#
 DECLARE @monthDateStart DATE = dbo.fs_getFirstDayOfMonth(@year, @month)     --Начало месяца.
 DECLARE @monthDateEnd   DATE = dbo.fs_getLastDayOfMonth(@year, @month)      --Конец месяца.
 
@@ -46,7 +46,6 @@ CREATE TABLE #DOCUMENTS (
 )
 CREATE TABLE #SERV_SDU (
     CARE_DIARY_OUID     INT,    --Идентификатор дневника ухода.
-    IPPSU_OUID          INT,    --ИППСУ, на основании которой сформирован план.
     ADDITION_OUID       INT,    --Дополнение к ИППСУ, на основании которой сформирован план.
     SERV_SDU            INT,    --Услуга.
     EXECUTE_TIME        INT,    --Время для исполнения услуги.
@@ -68,7 +67,13 @@ CREATE TABLE #MONTH_PLAN (
     DAY_29 INT, DAY_30 INT, DAY_31 INT,
 )
 
---------------------------------------------------------------------------------------------------------------------------------
+------------------------------------------------------------------------------------------------------------------------------
+
+--Константы.
+DECLARE @activeStatus       INT = (SELECT A_ID FROM ESRN_SERV_STATUS WHERE A_STATUSCODE = 'act')    --Статус действующей (не удаленной) записи.
+DECLARE @docTypeCareDiary   INT = (SELECT A_ID FROM PPR_DOC WHERE A_CODE = 'CareDiary')             --Идентификатор типа документа дневника ухода.
+
+------------------------------------------------------------------------------------------------------------------------------
 
 --Параметры цикла формирования информации об месяце.
 DECLARE @tempDate       DATE    = @monthDateStart           --Итератор.
@@ -109,37 +114,10 @@ END
 
 --------------------------------------------------------------------------------------------------------------------------------
 
---Выбор всех действующих документов на указанный месяц.
-INSERT INTO #DOCUMENTS (OUID, PERSONOUID, TYPE, DATE_START, DATE_END)
-SELECT
-    document.OUID                                   AS OUID,
-    personalCard.OUID                               AS PERSONOUID,
-    document.DOCUMENTSTYPE                          AS TYPE,
-    CONVERT(DATE, document.ISSUEEXTENSIONSDATE)     AS DATE_START,
-    CONVERT(DATE,  document.COMPLETIONSACTIONDATE)  AS DATE_END
-FROM WM_ACTDOCUMENTS document --Действующие документы.  
-----Личное дело держателя документа.
-    INNER JOIN WM_PERSONAL_CARD personalCard
-        ON personalCard.OUID = document.PERSONOUID 
-            AND personalCard.A_STATUS = 10
-            AND personalCard.A_PCSTATUS = 1
-            AND personalCard.A_DEATHDATE IS NULL
-WHERE document.A_STATUS = 10
-    AND document.A_DOCSTATUS = 1
-    AND dbo.fs_thisPeriodsCross(document.ISSUEEXTENSIONSDATE, document.COMPLETIONSACTIONDATE, @monthDateStart, @monthDateEnd, DEFAULT) = 1
-    AND document.DOCUMENTSTYPE IN (
-        4404,   --Дневник ухода.
-        3883,   --Индивидуальная программа предоставления социальных услуг.
-        4388    --Дополнение к индивидуальной программе предоставления социальных услуг.
-    )
-
---------------------------------------------------------------------------------------------------------------------------------
-
 --Формирование планов на день. 
-INSERT INTO #SERV_SDU(CARE_DIARY_OUID, IPPSU_OUID, ADDITION_OUID, SERV_SDU, EXECUTE_TIME, COUNT_IN_DAY, FIRST_DAY_OF_MONTH, LAST_DAY_OF_MONTH)
+INSERT INTO #SERV_SDU(CARE_DIARY_OUID, ADDITION_OUID, SERV_SDU, EXECUTE_TIME, COUNT_IN_DAY, FIRST_DAY_OF_MONTH, LAST_DAY_OF_MONTH)
 SELECT DISTINCT
     careDiaryInfo.A_OUID        AS CARE_DIARY_OUID,
-    infoIPPSU.A_OUID            AS IPPSU_OUID,
     additionInfo.A_OUID         AS ADDITION_OUID,
     servSDU.A_SOC_SERV          AS SERV_SDU,
     CASE 
@@ -148,27 +126,23 @@ SELECT DISTINCT
         ELSE 0
     END                     AS EXECUTE_TIME,
     servSDU.A_PERIOD_DAY    AS COUNT_IN_DAY,
-    CASE WHEN @monthDateStart < CONVERT(DATE, careDiaryDoc.DATE_START)
-        THEN DAY(careDiaryDoc.DATE_START) ELSE 1
+    CASE WHEN @monthDateStart < CONVERT(DATE, careDiaryDoc.ISSUEEXTENSIONSDATE)
+        THEN DAY(careDiaryDoc.ISSUEEXTENSIONSDATE) ELSE 1
     END AS FIRST_DAY_OF_MONTH,
-    CASE WHEN @monthDateEnd > CONVERT(DATE, careDiaryDoc.DATE_END)
-        THEN DAY(careDiaryDoc.DATE_END) ELSE DAY(@monthDateEnd)
+    CASE WHEN @monthDateEnd > CONVERT(DATE, careDiaryDoc.COMPLETIONSACTIONDATE)
+        THEN DAY(careDiaryDoc.COMPLETIONSACTIONDATE) ELSE DAY(@monthDateEnd)
     END AS LAST_DAY_OF_MONTH
-FROM #DOCUMENTS careDiaryDoc --Документ дневника ухода.
-----Информация дневника ухода.
-    INNER JOIN CARE_DIARY careDiaryInfo
-        ON careDiaryInfo.DOCUMENT_OUID = careDiaryDoc.OUID
-            AND careDiaryInfo.A_STATUS = 10
-----Документ ИППСУ.
-    INNER JOIN #DOCUMENTS docIPPSU
-        ON docIPPSU.OUID = careDiaryInfo.DOCUMENT_IPPSU
-----Информация из ИППСУ.
-    INNER JOIN INDIVID_PROGRAM infoIPPSU
-        ON infoIPPSU.A_DOC = docIPPSU.OUID
-            AND infoIPPSU.A_STATUS = 10
+FROM CARE_DIARY careDiaryInfo --Информация дневника ухода.
+----Документ дневника ухода.
+    INNER JOIN WM_ACTDOCUMENTS careDiaryDoc
+        ON careDiaryDoc.OUID = careDiaryInfo.DOCUMENT_OUID
+            AND careDiaryDoc.A_STATUS = @activeStatus
+            AND dbo.fs_thisPeriodsCross(careDiaryDoc.ISSUEEXTENSIONSDATE, careDiaryDoc.COMPLETIONSACTIONDATE, @monthDateStart, @monthDateEnd, DEFAULT) = 1
+            AND careDiaryDoc.DOCUMENTSTYPE = @docTypeCareDiary
 ----Документ дополнения к ИППСУ.
-    INNER JOIN #DOCUMENTS additionDoc
-        ON additionDoc.OUID = infoIPPSU.A_DOC_ADD_IPPSU
+    INNER JOIN WM_ACTDOCUMENTS additionDoc
+        ON additionDoc.OUID = careDiaryInfo.DOCUMENT_ADDITION
+            AND additionDoc.A_STATUS = @activeStatus 
 ----Информация из дополнения к ИППСУ.
     INNER JOIN INDIVID_PROGRAM_ADDITION additionInfo
         ON additionInfo.A_DOCUMENT = additionDoc.OUID
@@ -178,7 +152,17 @@ FROM #DOCUMENTS careDiaryDoc --Документ дневника ухода.
         ON servSDU.A_IPPSU_ADDITION = additionInfo.A_OUID
             AND servSDU.A_STATUS = 10
             AND ISNULL(servSDU.A_SOCSERV_NOT_NEED, 0) = 0
-WHERE careDiaryDoc.TYPE = 4404   --Дневник ухода.
+----План-отчет предоставления услуг СДУ из дневника ухода
+    LEFT JOIN CARE_DIARY_REPORT report
+        ON report.CARE_DIARY_OUID = careDiaryInfo.A_OUID
+            AND report.A_STATUS = @activeStatus
+            AND report.YEAR = @year
+            AND report.MONTH = @month
+WHERE careDiaryInfo.A_STATUS = @activeStatus
+    AND report.A_OUID IS NULL
+    AND careDiaryInfo.A_OUID IN (
+        #careDiary#
+    )
 
 ------------------------------------------------------------------------------------------------------------------------------
 

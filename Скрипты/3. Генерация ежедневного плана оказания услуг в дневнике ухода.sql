@@ -1,7 +1,7 @@
 --------------------------------------------------------------------------------------------------------------------------------
 
 --Параметры.
-DECLARE @dateForPlan    DATE    = CONVERT(DATE, GETDATE())                  --День, для которого составляется график.
+DECLARE @dateForPlan    DATE    = CONVERT(DATE, '#dateForPlan#')              --День, для которого составляется график.
 DECLARE @weekForPlan    INT     = dbo.fs_getNumberWeekOfMonth(@dateForPlan) --Номер недели, для которой составляется график.
 DECLARE @dayForPlan     INT     = DATEPART(DW, @dateForPlan)                --День недели, для которой составляется план.
 DECLARE @year           INT     = YEAR(@dateForPlan)    --Год.
@@ -50,11 +50,20 @@ SET @query = '
         report.EXECUTE_TIME                             AS EXECUTE_TIME,
         report.DAY_' +  CONVERT(VARCHAR, @day) + '_ALL  AS COUNT_IN_DAY
     FROM CARE_DIARY_REPORT report --План-отчет предоставления услуг СДУ из дневника ухода.
+    ----План предоставления услуг на дату.
+        LEFT JOIN CARE_DIARY_PLAN_ON_DAY planOnDay
+            ON planOnDay.CARE_DIARY_REPORT = report.A_OUID
+                AND planOnDay.A_STATUS = 10
+                AND CONVERT(DATE, planOnDay.DATE) = CONVERT(DATE, ''' + CONVERT(VARCHAR, @dateForPlan) + ''')
     WHERE report.A_STATUS = 10
+        AND planOnDay.A_OUID IS NULL
         AND report.ROW_TYPE = 2
         AND report.YEAR = ' + CONVERT(VARCHAR, @year) + '
         AND report.MONTH = ' + CONVERT(VARCHAR, @month) + '
-        AND ISNULL(DAY_' + CONVERT(VARCHAR, @day) + '_ALL, 0) > 0'
+        AND ISNULL(DAY_' + CONVERT(VARCHAR, @day) + '_ALL, 0) > 0
+        AND report.CARE_DIARY_OUID  IN (
+            #careDiary#
+        )'
 
 EXEC SP_EXECUTESQL @query
 
