@@ -1,14 +1,21 @@
 --------------------------------------------------------------------------------------------------------------------------------
 
 --Удаление временных таблиц.
+IF OBJECT_ID('tempdb..#SOC_SERV_FOR_CREATE')    IS NOT NULL BEGIN DROP TABLE #SOC_SERV_FOR_CREATE   END --Назначения социального обслжуивания, для которых создается.
 IF OBJECT_ID('tempdb..#DESCRIPTOR_CREATION')    IS NOT NULL BEGIN DROP TABLE #DESCRIPTOR_CREATION   END --Дескриптор создания дневников ухода.
 IF OBJECT_ID('tempdb..#CREATED')                IS NOT NULL BEGIN DROP TABLE #CREATED               END --Созданные данные.
 
 --------------------------------------------------------------------------------------------------------------------------------
 
 --Создание временных таблиц.
+CREATE TABLE #SOC_SERV_FOR_CREATE (
+    SERV_DOCUMENT   INT, --Идентификатор договора на социальное обслжуивание.
+    SERV_INFO       INT  --Идентификатор содержимого назначения на обслуживание.
+)
 CREATE TABLE #DESCRIPTOR_CREATION (
     GUID                VARCHAR(36),    --Глобальный идентификатор записи.
+    SERV_DOCUMNET       INT,            --Идентификатор договора на социальное обслуживание.
+    SERV_INFO           INT,            --Идентификатор содержимого назначения на обслуживание.
     IPPSU_DOCUMENT      INT,            --Идентификатор документа ИППСУ, для которой создан дневник.
     IPPSU_INFO          INT,            --Идентификатор содержимого ИППСУ.
     ADDITION_DOCUMENT   INT,            --Идентификатор документа дополнения к ИППСУ.
@@ -30,21 +37,51 @@ DECLARE @docTypeCareDiary   INT = (SELECT A_ID FROM PPR_DOC WHERE A_CODE = 'Care
 
 ------------------------------------------------------------------------------------------------------------------------------
 
+--Выбор назначений на социальное обслжуивание для создания дневников.
+INSERT INTO #SOC_SERV_FOR_CREATE (SERV_DOCUMENT, SERV_INFO)
+SELECT DISTINCT
+    document.OUID   AS SERV_DOCUMENT,
+    socServ.OUID    AS SERV_INFO
+FROM ESRN_SOC_SERV socServ --Назначение социального обслуживания.
+----Агрегация по социальным услугам.
+    INNER JOIN WM_SOC_SERV_AGR_SDU AGR
+        ON AGR.ESRN_SOC_SERV = socServ.OUID
+            AND AGR.A_STATUS = @activeStatus
+----Договор на социальное обслуживание.
+    INNER JOIN WM_ACTDOCUMENTS document
+        ON document.OUID = AGR.A_CONTRACT
+            AND document.A_STATUS = @activeStatus
+WHERE socServ.A_STATUS = @activeStatus
+    AND socServ.OUID IN (
+        #socServ#
+    )
+
+------------------------------------------------------------------------------------------------------------------------------
+
 --Выбор документов ИППСУ, в соответствии которых формируются дневники.
-INSERT INTO #DESCRIPTOR_CREATION (GUID, IPPSU_DOCUMENT, IPPSU_INFO, ADDITION_DOCUMENT, ADDITION_INFO, CARE_DIARY_DOCUMENT, CARE_DIARY_INFO)
+INSERT INTO #DESCRIPTOR_CREATION (GUID, SERV_DOCUMNET, SERV_INFO, IPPSU_DOCUMENT, IPPSU_INFO, ADDITION_DOCUMENT, ADDITION_INFO, CARE_DIARY_DOCUMENT, CARE_DIARY_INFO)
 SELECT
     NEWID()                 AS GUID,
+    forCreate.SERV_DOCUMENT AS SERV_DOCUMNET,
+    socServ.OUID            AS SERV_INFO,
     documentIPPSU.OUID      AS IPPSU_DOCUMENT,
     IPPSU.A_OUID            AS IPPSU_INFO,
     documentAddition.OUID   AS ADDITION_DOCUMENT,
     addition.A_OUID         AS ADDITION_INFO,
     NULL                    AS CARE_DIARY_DOCUMENT, --Вставляется значение после вставки записи.
     NULL                    AS CARE_DIARY_INFO --Вставляется значение после вставки записи.
-FROM WM_ACTDOCUMENTS documentIPPSU --Документы ИППСУ.
+FROM #SOC_SERV_FOR_CREATE forCreate
+----Содержимое назначения социального обслуживания.
+    INNER JOIN ESRN_SOC_SERV socServ 
+        ON socServ.OUID = forCreate.SERV_INFO
 ----Содержимое ИППСУ.
     INNER JOIN INDIVID_PROGRAM IPPSU
-        ON IPPSU.A_DOC = documentIPPSU.OUID
+        ON IPPSU.A_OUID = socServ.A_IPPSU
             AND IPPSU.A_STATUS = @activeStatus
+----Документы ИППСУ.
+    INNER JOIN WM_ACTDOCUMENTS documentIPPSU 
+        ON documentIPPSU.OUID = IPPSU.A_DOC
+            AND documentIPPSU.A_STATUS = @activeStatus
 ----Документ дополнения к ИППСУ.
     INNER JOIN WM_ACTDOCUMENTS documentAddition
         ON documentAddition.OUID =  IPPSU.A_DOC_ADD_IPPSU
@@ -53,9 +90,6 @@ FROM WM_ACTDOCUMENTS documentIPPSU --Документы ИППСУ.
     INNER JOIN INDIVID_PROGRAM_ADDITION addition
         ON addition.A_DOCUMENT = documentAddition.OUID
             AND addition.A_STATUS = @activeStatus
-WHERE documentIPPSU.OUID IN (
-    11807720
-)
 
 ------------------------------------------------------------------------------------------------------------------------------
 
@@ -63,18 +97,20 @@ WHERE documentIPPSU.OUID IN (
 INSERT INTO WM_ACTDOCUMENTS (GUID, A_CREATEDATE, A_STATUS, PERSONOUID, DOCUMENTSTYPE, ISSUEEXTENSIONSDATE, COMPLETIONSACTIONDATE, GIVEDOCUMENTORG, A_GIVEDOCUMENTORG_TEXT, A_DOCSTATUS)
 OUTPUT inserted.GUID, inserted.OUID , 'WM_ACTDOCUMENTS' INTO #CREATED (GUID, OUID, TABLE_NAME) --Записываем в лог вставленные записи.
 SELECT
-    descriptor.GUID                         AS GUID,    --Для связки созданных записей с дескриптором.
-    GETDATE()                               AS A_CREATEDATE,
-    @activeStatus                           AS A_STATUS,
-    documentIPPSU.PERSONOUID                AS PERSONOUID,
-    @docTypeCareDiary                       AS DOCUMENTSTYPE,
-    documentIPPSU.ISSUEEXTENSIONSDATE       AS ISSUEEXTENSIONSDATE,
-    documentIPPSU.COMPLETIONSACTIONDATE     AS COMPLETIONSACTIONDATE,
-    documentIPPSU.GIVEDOCUMENTORG           AS GIVEDOCUMENTORG,
-    documentIPPSU.A_GIVEDOCUMENTORG_TEXT    AS A_GIVEDOCUMENTORG_TEXT,
-    documentIPPSU.A_DOCSTATUS               AS A_DOCSTATUS
+    descriptor.GUID                                                                             AS GUID,    --Для связки созданных записей с дескриптором.
+    GETDATE()                                                                                   AS A_CREATEDATE,
+    @activeStatus                                                                               AS A_STATUS,
+    documentServ.PERSONOUID                                                                     AS PERSONOUID,
+    @docTypeCareDiary                                                                           AS DOCUMENTSTYPE,
+    documentServ.ISSUEEXTENSIONSDATE                                                            AS ISSUEEXTENSIONSDATE,
+    dbo.fs_getMinDate(documentServ.COMPLETIONSACTIONDATE, documentIPPSU.COMPLETIONSACTIONDATE)  AS COMPLETIONSACTIONDATE,
+    documentServ.GIVEDOCUMENTORG                                                                AS GIVEDOCUMENTORG,
+    documentServ.A_GIVEDOCUMENTORG_TEXT                                                         AS A_GIVEDOCUMENTORG_TEXT,
+    documentServ.A_DOCSTATUS                                                                    AS A_DOCSTATUS
 FROM #DESCRIPTOR_CREATION descriptor --Дескриптор создания.
 ----Содержимое данных документов.
+    INNER JOIN WM_ACTDOCUMENTS documentServ
+        ON documentServ.OUID = descriptor.SERV_DOCUMNET
     INNER JOIN WM_ACTDOCUMENTS documentIPPSU
         ON documentIPPSU.OUID = descriptor.IPPSU_DOCUMENT
 
@@ -90,13 +126,16 @@ WHERE created.TABLE_NAME = 'WM_ACTDOCUMENTS'
 ------------------------------------------------------------------------------------------------------------------------------
 
 --Создание содержимого дневника ухода.
-INSERT INTO CARE_DIARY (GUID, A_CREATEDATE, A_STATUS, DOCUMENT_OUID, LEVEL_OF_NEED, DOCUMENT_IPPSU)
+INSERT INTO CARE_DIARY (GUID, A_CREATEDATE, A_STATUS, DOCUMENT_OUID, DOCUMENT_ADDITION, DOCUMENT_SOC_SERV, SOC_SERV, LEVEL_OF_NEED, DOCUMENT_IPPSU)
 OUTPUT inserted.GUID, inserted.A_OUID , 'CARE_DIARY' INTO #CREATED (GUID, OUID, TABLE_NAME) --Записываем в лог вставленные записи.
 SELECT
     NEWID()                         AS GUID,
     GETDATE()                       AS A_CREATEDATE,
     @activeStatus                   AS A_STATUS,
     descriptor.CARE_DIARY_DOCUMENT  AS DOCUMENT_OUID,
+    descriptor.ADDITION_DOCUMENT    AS DOCUMENT_ADDITION, 
+    descriptor.SERV_DOCUMNET        AS DOCUMENT_SOC_SERV, 
+    descriptor.SERV_INFO            AS SOC_SERV,
     IPPSU.LEVEL_OF_NEED             AS LEVEL_OF_NEED,
     descriptor.IPPSU_DOCUMENT       AS DOCUMENT_IPPSU
 FROM #DESCRIPTOR_CREATION descriptor --Дескриптор создания.
@@ -221,13 +260,3 @@ FROM (
         ON workPlan.CARE_DIARY_OUID = maxCountVisitOnDay.CARE_DIARY_INFO
 
 ------------------------------------------------------------------------------------------------------------------------------
-
---Дескрипторы.
-SELECT
-*
-FROM #DESCRIPTOR_CREATION descriptor  --Дескриптор создания.
-
---Созданные данные.
-SELECT 
-    * 
-FROM #CREATED
