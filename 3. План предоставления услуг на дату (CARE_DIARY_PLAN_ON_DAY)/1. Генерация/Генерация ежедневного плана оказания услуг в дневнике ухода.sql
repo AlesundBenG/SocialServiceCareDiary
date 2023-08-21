@@ -14,7 +14,13 @@ DECLARE @day            INT     = DAY(@dateForPlan)     --День.
 IF OBJECT_ID('tempdb..#SERV_SDU_FOR_DAY')   IS NOT NULL BEGIN DROP TABLE #SERV_SDU_FOR_DAY  END --Список услуг СДУ для указанного дня.
 IF OBJECT_ID('tempdb..#WORK_PLAN')          IS NOT NULL BEGIN DROP TABLE #WORK_PLAN         END --План оказания услуг для указанного дня.
 
---------------------------------------------------------------------------------------------------------------------------------
+------------------------------------------------------------------------------------------------------------------------------
+
+--Константы.
+DECLARE @activeStatus       INT = (SELECT A_ID FROM ESRN_SERV_STATUS WHERE A_STATUSCODE = 'act')    --Статус действующей (не удаленной) записи.
+DECLARE @docTypeCareDiary   INT = (SELECT A_ID FROM PPR_DOC WHERE A_CODE = 'CareDiary')             --Идентификатор типа документа дневника ухода.
+
+------------------------------------------------------------------------------------------------------------------------------
 
 --Создание временных таблиц.
 CREATE TABLE #SERV_SDU_FOR_DAY (
@@ -47,9 +53,9 @@ SET @query = '
     ----План предоставления услуг на дату.
         LEFT JOIN CARE_DIARY_PLAN_ON_DAY planOnDay
             ON planOnDay.CARE_DIARY_REPORT = report.A_OUID
-                AND planOnDay.A_STATUS = 10
+                AND planOnDay.A_STATUS = ' + CONVERT(VARCHAR, @activeStatus) + '
                 AND CONVERT(DATE, planOnDay.DATE) = CONVERT(DATE, ''' + CONVERT(VARCHAR, @dateForPlan) + ''')
-    WHERE report.A_STATUS = 10
+    WHERE report.A_STATUS = ' + CONVERT(VARCHAR, @activeStatus) + '
         AND planOnDay.A_OUID IS NULL
         AND report.ROW_TYPE = 2
         AND report.YEAR = ' + CONVERT(VARCHAR, @year) + '
@@ -91,7 +97,7 @@ DEALLOCATE @cursorMultiplyRows --Освобождения ресурсов, вы
 ------------------------------------------------------------------------------------------------------------------------------
 
 --Вставка плана.
-INSERT INTO CARE_DIARY_PLAN_ON_DAY(CARE_DIARY_OUID, CARE_DIARY_REPORT, INDEX_IN_DAY, COUNT_IN_DAY, DATE, WEEK_NUMBER, DAY_NUMBER, PERFORM, A_STATUS, A_CREATEDATE)
+INSERT INTO CARE_DIARY_PLAN_ON_DAY(CARE_DIARY_OUID, CARE_DIARY_REPORT, INDEX_IN_DAY, COUNT_IN_DAY, DATE, WEEK_NUMBER, DAY_NUMBER, PERFORM, A_STATUS, A_CREATEDATE, CHANGED)
 SELECT 
     CARE_DIARY_OUID     AS CARE_DIARY_OUID, 
     CARE_DIARY_REPORT   AS CARE_DIARY_REPORT,
@@ -101,8 +107,9 @@ SELECT
     WEEK_NUMBER         AS WEEK_NUMBER, 
     DAY_NUMBER          AS DAY_NUMBER, 
     0                   AS PERFORM,
-    10                  AS A_STATUS,
-    GETDATE()           AS A_CREATEDATE
+    @activeStatus       AS A_STATUS,
+    GETDATE()           AS A_CREATEDATE,
+    0                   AS CHANGED
 FROM #WORK_PLAN
 
 ------------------------------------------------------------------------------------------------------------------------------

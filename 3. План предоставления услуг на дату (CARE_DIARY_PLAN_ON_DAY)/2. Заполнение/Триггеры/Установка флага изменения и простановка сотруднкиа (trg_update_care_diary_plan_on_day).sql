@@ -5,7 +5,7 @@ SET ANSI_NULLS ON
 GO
 SET QUOTED_IDENTIFIER ON
 GO
-CREATE TRIGGER [dbo].[trg_update_care_diary_plan_on_day] ON [dbo].[CARE_DIARY_PLAN_ON_DAY]
+ALTER TRIGGER [dbo].[trg_update_care_diary_plan_on_day] ON [dbo].[CARE_DIARY_PLAN_ON_DAY]
 AFTER UPDATE
 AS
 BEGIN
@@ -21,4 +21,5 @@ BEGIN
             ON planOnDay.A_OUID = inserted.A_OUID
     WHERE ISNULL(inserted.PERFORM, 0) <> ISNULL(deleted.PERFORM, 0) --Установлен или снят флаг.
         OR ISNULL(inserted.A_STATUS, 0) <> ISNULL(deleted.A_STATUS, 0) --Или запись удалена.
+        OR ISNULL(inserted.CARE_DIARY_REPORT, 0) <> ISNULL(deleted.CARE_DIARY_REPORT, 0) --Отвязана от отчета.
 END

@@ -9,6 +9,7 @@ IF OBJECT_ID('tempdb..#FOR_REPORT')             IS NOT NULL BEGIN DROP TABLE #FO
 
 --Создание временных таблиц.
 CREATE TABLE #CHANGED_SERV_SDU (
+    PLAN_ON_DAY         INT,    --Ежедневный отчет.
     CARE_DIARY_REPORT   INT,    --Ежемесячный отчет по услуге.
     FOR_DATE            DATE    --Дата плана услуги.
 )
@@ -24,8 +25,9 @@ CREATE TABLE #FOR_REPORT (
 ------------------------------------------------------------------------------------------------------------------------------
 
 --Выбор измененных услуг за другой день.
-INSERT INTO #CHANGED_SERV_SDU (CARE_DIARY_REPORT, FOR_DATE)
+INSERT INTO #CHANGED_SERV_SDU (PLAN_ON_DAY, CARE_DIARY_REPORT, FOR_DATE)
 SELECT DISTINCT
+    planOnDay.A_OUID                AS PLAN_ON_DAY,
     planOnDay.CARE_DIARY_REPORT     AS CARE_DIARY_REPORT,
     CONVERT(DATE, planOnDay.DATE)   AS FOR_DATE
 FROM CARE_DIARY_PLAN_ON_DAY planOnDay --План предоставления услуг на дату
@@ -47,7 +49,7 @@ SELECT
     planOnDay.CARE_DIARY_REPORT                     AS CARE_DIARY_REPORT,
     changed.FOR_DATE                                AS FOR_DATE,
     SUM(CONVERT(INT, ISNULL(planOnDay.PERFORM, 0))) AS COUNT_PERFORM
-FROM #CHANGED_SERV_SDU changed --Измененные услуги.
+FROM (SELECT DISTINCT CARE_DIARY_REPORT, FOR_DATE FROM #CHANGED_SERV_SDU) changed --Измененные услуги.
 ----План предоставления услуг на дату.
     INNER JOIN CARE_DIARY_PLAN_ON_DAY planOnDay 
         ON planOnDay.CARE_DIARY_REPORT = changed.CARE_DIARY_REPORT
@@ -74,9 +76,12 @@ WHILE @numberDay IS NOT NULL BEGIN
     SET @numberDay = (SELECT MIN(DAY_NUMBER) FROM #CHANGED_DAY_OF_MONTH WHERE DAY_NUMBER > @numberDay)
 END
 
---Меняем флаг того, что данные не редактируются сейчас
-UPDATE CARE_DIARY_PLAN_ON_DAY
-SET CHANGED = 0
-WHERE ISNULL(CHANGED, 0) = 1 --Данные изменены.
+--Меняем флаг того, что данные загружены в отчет.
+UPDATE planOnDay
+SET planOnDay.CHANGED = 0
+FROM CARE_DIARY_PLAN_ON_DAY planOnDay
+    INNER JOIN #CHANGED_SERV_SDU forUpdate
+        ON forUpdate.PLAN_ON_DAY = planOnDay.A_OUID
+WHERE ISNULL(planOnDay.CHANGED, 0) = 1 --Данные изменены.
 
 --------------------------------------------------------------------------------------------------------------------------------
