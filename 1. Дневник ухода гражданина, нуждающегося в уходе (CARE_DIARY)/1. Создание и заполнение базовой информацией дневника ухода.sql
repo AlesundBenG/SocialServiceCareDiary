@@ -31,8 +31,7 @@ CREATE TABLE #CREATED (
 ------------------------------------------------------------------------------------------------------------------------------
 
 --Константы.
-DECLARE @activeStatus       INT = (SELECT A_ID FROM ESRN_SERV_STATUS WHERE A_STATUSCODE = 'act')    --Статус действующей (не удаленной) записи.
-DECLARE @docTypeCareDiary   INT = (SELECT A_ID FROM PPR_DOC WHERE A_CODE = 'CareDiary')             --Идентификатор типа документа дневника ухода.
+DECLARE @activeStatus INT = (SELECT A_ID FROM ESRN_SERV_STATUS WHERE A_STATUSCODE = 'act') --Статус действующей (не удаленной) записи.
 
 ------------------------------------------------------------------------------------------------------------------------------
 

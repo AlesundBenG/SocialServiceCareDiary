@@ -23,6 +23,7 @@ IF OBJECT_ID('tempdb..#MONTH_INFO') IS NOT NULL BEGIN DROP TABLE #MONTH_INFO    
 IF OBJECT_ID('tempdb..#DOCUMENTS')  IS NOT NULL BEGIN DROP TABLE #DOCUMENTS     END --Необходимые документы.
 IF OBJECT_ID('tempdb..#SERV_SDU')   IS NOT NULL BEGIN DROP TABLE #SERV_SDU      END --Список услуг СДУ из дополнений ИППСУ.
 IF OBJECT_ID('tempdb..#MONTH_PLAN') IS NOT NULL BEGIN DROP TABLE #MONTH_PLAN    END --План оказания услуг на месяц.
+IF OBJECT_ID('tempdb..#CREATED')    IS NOT NULL BEGIN DROP TABLE #CREATED       END --План оказания услуг на месяц.
 
 --------------------------------------------------------------------------------------------------------------------------------
 
@@ -67,11 +68,11 @@ CREATE TABLE #MONTH_PLAN (
     DAY_29 INT, DAY_30 INT, DAY_31 INT,
 )
 
+
 ------------------------------------------------------------------------------------------------------------------------------
 
 --Константы.
-DECLARE @activeStatus       INT = (SELECT A_ID FROM ESRN_SERV_STATUS WHERE A_STATUSCODE = 'act')    --Статус действующей (не удаленной) записи.
-DECLARE @docTypeCareDiary   INT = (SELECT A_ID FROM PPR_DOC WHERE A_CODE = 'CareDiary')             --Идентификатор типа документа дневника ухода.
+DECLARE @activeStatus INT = (SELECT A_ID FROM ESRN_SERV_STATUS WHERE A_STATUSCODE = 'act')    --Статус действующей (не удаленной) записи.
 
 ------------------------------------------------------------------------------------------------------------------------------
 
@@ -82,7 +83,6 @@ DECLARE @tempNumberWeek INT     = 1                         --Номер нед�
 DECLARE @numberWeek     INT     = 1
 DECLARE @dateWeekEnd    DATE    
 DECLARE @query          NVARCHAR(MAX)   = '' --Для запроса.
-
 
 --Цикл формирования информации об месяце.
 WHILE @tempDate <= @monthDateEnd BEGIN
@@ -126,19 +126,22 @@ SELECT DISTINCT
         ELSE 0
     END                     AS EXECUTE_TIME,
     servSDU.A_PERIOD_DAY    AS COUNT_IN_DAY,
-    CASE WHEN @monthDateStart < CONVERT(DATE, careDiaryDoc.ISSUEEXTENSIONSDATE)
-        THEN DAY(careDiaryDoc.ISSUEEXTENSIONSDATE) ELSE 1
+    CASE WHEN @monthDateStart < CONVERT(DATE, period.STARTDATE)
+        THEN DAY(period.STARTDATE) ELSE 1
     END AS FIRST_DAY_OF_MONTH,
-    CASE WHEN @monthDateEnd > CONVERT(DATE, careDiaryDoc.COMPLETIONSACTIONDATE)
-        THEN DAY(careDiaryDoc.COMPLETIONSACTIONDATE) ELSE DAY(@monthDateEnd)
+    CASE WHEN @monthDateEnd > CONVERT(DATE, period.A_LASTDATE)
+        THEN DAY(period.A_LASTDATE) ELSE DAY(@monthDateEnd)
     END AS LAST_DAY_OF_MONTH
 FROM CARE_DIARY careDiaryInfo --Информация дневника ухода.
-----Документ дневника ухода.
-    INNER JOIN WM_ACTDOCUMENTS careDiaryDoc
-        ON careDiaryDoc.OUID = careDiaryInfo.DOCUMENT_OUID
-            AND careDiaryDoc.A_STATUS = @activeStatus
-            AND dbo.fs_thisPeriodsCross(careDiaryDoc.ISSUEEXTENSIONSDATE, careDiaryDoc.COMPLETIONSACTIONDATE, @monthDateStart, @monthDateEnd, DEFAULT) = 1
-            AND careDiaryDoc.DOCUMENTSTYPE = @docTypeCareDiary
+----Назначение социального обслуживания.
+    INNER JOIN ESRN_SOC_SERV socServ 
+        ON socServ.OUID = careDiaryInfo.SOC_SERV
+            AND socServ.A_STATUS = @activeStatus
+----Период предоставления МСП.        
+    INNER JOIN SPR_SOCSERV_PERIOD period
+        ON period.A_SERV = socServ.OUID   
+            AND period.A_STATUS = @activeStatus         
+            AND dbo.fs_thisPeriodsCross(@monthDateStart, @monthDateEnd, period.STARTDATE, period.A_LASTDATE, DEFAULT) = 1
 ----Документ дополнения к ИППСУ.
     INNER JOIN WM_ACTDOCUMENTS additionDoc
         ON additionDoc.OUID = careDiaryInfo.DOCUMENT_ADDITION
@@ -146,11 +149,11 @@ FROM CARE_DIARY careDiaryInfo --Информация дневника ухода
 ----Информация из дополнения к ИППСУ.
     INNER JOIN INDIVID_PROGRAM_ADDITION additionInfo
         ON additionInfo.A_DOCUMENT = additionDoc.OUID
-            AND additionInfo.A_STATUS = 10
+            AND additionInfo.A_STATUS = @activeStatus
 ----Услуги, попадающие под указанный день.
     INNER JOIN SOCSERV_INDIVIDPROGRAM_ADDITION servSDU
         ON servSDU.A_IPPSU_ADDITION = additionInfo.A_OUID
-            AND servSDU.A_STATUS = 10
+            AND servSDU.A_STATUS = @activeStatus
             AND ISNULL(servSDU.A_SOCSERV_NOT_NEED, 0) = 0
 ----План-отчет предоставления услуг СДУ из дневника ухода
     LEFT JOIN CARE_DIARY_REPORT report
@@ -211,7 +214,7 @@ WHILE @numberWeek <= @numberWeekMax BEGIN
                 ON serv.A_IPPSU_ADDITION = mP.ADDITION_OUID
                     AND serv.A_SOC_SERV = mP.SERV_SDU
                     AND serv.A_STATUS = 10
-                    AND serv.A_WEEK_NUM = monthInfo.WEEK_NUMBER
+                    AND ISNULL(serv.A_WEEK_NUM, 1) = monthInfo.WEEK_NUMBER
         WHERE monthInfo.WEEK_NUMBER = ' + CONVERT(VARCHAR, CASE WHEN @numberWeek <= 5 THEN @numberWeek ELSE @numberWeek - 5 END) --Если 6 недель, то 6 неделя считается первой.
     EXEC SP_EXECUTESQL @query
     SET @numberWeek = @numberWeek + 1
@@ -219,86 +222,86 @@ END
 
 --------------------------------------------------------------------------------------------------------------------------------
 
---Вставка заголовков.
-INSERT INTO CARE_DIARY_REPORT (YEAR, MONTH, CARE_DIARY_OUID,
-    DAY_1_ALL,  DAY_2_ALL,  DAY_3_ALL,  DAY_4_ALL,  DAY_5_ALL,  DAY_6_ALL,  DAY_7_ALL, 
-    DAY_8_ALL,  DAY_9_ALL,  DAY_10_ALL, DAY_11_ALL, DAY_12_ALL, DAY_13_ALL, DAY_14_ALL, 
-    DAY_15_ALL, DAY_16_ALL, DAY_17_ALL, DAY_18_ALL, DAY_19_ALL, DAY_20_ALL, DAY_21_ALL, 
-    DAY_22_ALL, DAY_23_ALL, DAY_24_ALL, DAY_25_ALL, DAY_26_ALL, DAY_27_ALL, DAY_28_ALL, 
-    DAY_29_ALL, DAY_30_ALL, DAY_31_ALL, 
-    DAY_1_PERFORM,  DAY_2_PERFORM,  DAY_3_PERFORM,  DAY_4_PERFORM,  DAY_5_PERFORM,  DAY_6_PERFORM,  DAY_7_PERFORM, 
-    DAY_8_PERFORM,  DAY_9_PERFORM,  DAY_10_PERFORM, DAY_11_PERFORM, DAY_12_PERFORM, DAY_13_PERFORM, DAY_14_PERFORM, 
-    DAY_15_PERFORM, DAY_16_PERFORM, DAY_17_PERFORM, DAY_18_PERFORM, DAY_19_PERFORM, DAY_20_PERFORM, DAY_21_PERFORM, 
-    DAY_22_PERFORM, DAY_23_PERFORM, DAY_24_PERFORM, DAY_25_PERFORM, DAY_26_PERFORM, DAY_27_PERFORM, DAY_28_PERFORM, 
-    DAY_29_PERFORM, DAY_30_PERFORM, DAY_31_PERFORM, 
-    A_STATUS, ROW_TYPE
-)
-SELECT DISTINCT
-    @year                       AS YEAR,
-    @month                      AS MONTH,
-    monthPlan.CARE_DIARY_OUID   AS CARE_DIARY_OUID,
-    --Функция SUM игнорирует NULL, поэтому на NULL не проверяем для производительности.
-    SUM(ISNULL(monthPlan.DAY_1, 0))  AS DAY_1_ALL,  SUM(ISNULL(monthPlan.DAY_2, 0))  AS DAY_2_ALL,  SUM(ISNULL(monthPlan.DAY_3, 0))  AS DAY_3_ALL,  
-    SUM(ISNULL(monthPlan.DAY_4, 0))  AS DAY_4_ALL,  SUM(ISNULL(monthPlan.DAY_5, 0))  AS DAY_5_ALL,  SUM(ISNULL(monthPlan.DAY_6, 0))  AS DAY_6_ALL,  
-    SUM(ISNULL(monthPlan.DAY_7, 0))  AS DAY_7_ALL,  SUM(ISNULL(monthPlan.DAY_8, 0))  AS DAY_8_ALL,  SUM(ISNULL(monthPlan.DAY_9, 0))  AS DAY_9_ALL,  
-    SUM(ISNULL(monthPlan.DAY_10, 0)) AS DAY_10_ALL, SUM(ISNULL(monthPlan.DAY_11, 0)) AS DAY_11_ALL, SUM(ISNULL(monthPlan.DAY_12, 0)) AS DAY_12_ALL, 
-    SUM(ISNULL(monthPlan.DAY_13, 0)) AS DAY_13_ALL, SUM(ISNULL(monthPlan.DAY_14, 0)) AS DAY_14_ALL, SUM(ISNULL(monthPlan.DAY_15, 0)) AS DAY_15_ALL, 
-    SUM(ISNULL(monthPlan.DAY_16, 0)) AS DAY_16_ALL, SUM(ISNULL(monthPlan.DAY_17, 0)) AS DAY_17_ALL, SUM(ISNULL(monthPlan.DAY_18, 0)) AS DAY_18_ALL, 
-    SUM(ISNULL(monthPlan.DAY_19, 0)) AS DAY_19_ALL, SUM(ISNULL(monthPlan.DAY_20, 0)) AS DAY_20_ALL, SUM(ISNULL(monthPlan.DAY_21, 0)) AS DAY_21_ALL, 
-    SUM(ISNULL(monthPlan.DAY_22, 0)) AS DAY_22_ALL, SUM(ISNULL(monthPlan.DAY_23, 0)) AS DAY_23_ALL, SUM(ISNULL(monthPlan.DAY_24, 0)) AS DAY_24_ALL, 
-    SUM(ISNULL(monthPlan.DAY_25, 0)) AS DAY_25_ALL, SUM(ISNULL(monthPlan.DAY_26, 0)) AS DAY_26_ALL, SUM(ISNULL(monthPlan.DAY_27, 0)) AS DAY_27_ALL, 
-    SUM(ISNULL(monthPlan.DAY_28, 0)) AS DAY_28_ALL, SUM(ISNULL(monthPlan.DAY_29, 0)) AS DAY_29_ALL, SUM(ISNULL(monthPlan.DAY_30, 0)) AS DAY_30_ALL, 
-    SUM(ISNULL(monthPlan.DAY_31, 0)) AS DAY_31_ALL,
-    0 AS DAY_1_PERFORM,  0 AS DAY_2_PERFORM,  0 AS DAY_3_PERFORM,  0 AS DAY_4_PERFORM,  0 AS DAY_5_PERFORM,  0 AS DAY_6_PERFORM,  0 AS DAY_7_PERFORM, 
-    0 AS DAY_8_PERFORM,  0 AS DAY_9_PERFORM,  0 AS DAY_10_PERFORM, 0 AS DAY_11_PERFORM, 0 AS DAY_12_PERFORM, 0 AS DAY_13_PERFORM, 0 AS DAY_14_PERFORM, 
-    0 AS DAY_15_PERFORM, 0 AS DAY_16_PERFORM, 0 AS DAY_17_PERFORM, 0 AS DAY_18_PERFORM, 0 AS DAY_19_PERFORM, 0 AS DAY_20_PERFORM, 0 AS DAY_21_PERFORM, 
-    0 AS DAY_22_PERFORM, 0 AS DAY_23_PERFORM, 0 AS DAY_24_PERFORM, 0 AS DAY_25_PERFORM, 0 AS DAY_26_PERFORM, 0 AS DAY_27_PERFORM, 0 AS DAY_28_PERFORM, 
-    0 AS DAY_29_PERFORM, 0 AS DAY_30_PERFORM, 0 AS DAY_31_PERFORM, 
-    10                          AS A_STATUS,
-    1                           AS ROW_TYPE
-FROM #MONTH_PLAN monthPlan
-----Для данного месяца еще нет заголовка.
-    LEFT JOIN CARE_DIARY_REPORT reportMonth
-        ON reportMonth.CARE_DIARY_OUID =  monthPlan.CARE_DIARY_OUID
-            AND reportMonth.A_STATUS = 10
-            AND reportMonth.YEAR = @year
-            AND reportMonth.MONTH = @month
-            AND reportMonth.ROW_TYPE = 1
-WHERE reportMonth.A_OUID IS NULL
-GROUP BY monthPlan.CARE_DIARY_OUID
-
 --Вставка планов.
-INSERT INTO CARE_DIARY_REPORT (YEAR, MONTH, CARE_DIARY_OUID, SERV_SDU, EXECUTE_TIME,
+INSERT INTO CARE_DIARY_REPORT (YEAR, MONTH, CARE_DIARY_OUID, SERV_SDU, EXECUTE_TIME, A_STATUS, ROW_TYPE,
     DAY_1_ALL,  DAY_2_ALL,  DAY_3_ALL,  DAY_4_ALL,  DAY_5_ALL,  DAY_6_ALL,  DAY_7_ALL, 
     DAY_8_ALL,  DAY_9_ALL,  DAY_10_ALL, DAY_11_ALL, DAY_12_ALL, DAY_13_ALL, DAY_14_ALL, 
     DAY_15_ALL, DAY_16_ALL, DAY_17_ALL, DAY_18_ALL, DAY_19_ALL, DAY_20_ALL, DAY_21_ALL, 
     DAY_22_ALL, DAY_23_ALL, DAY_24_ALL, DAY_25_ALL, DAY_26_ALL, DAY_27_ALL, DAY_28_ALL, 
     DAY_29_ALL, DAY_30_ALL, DAY_31_ALL,
+    COUNT_ALL_INSERTED, TIME_ALL_INSERTED,
     DAY_1_PERFORM,  DAY_2_PERFORM,  DAY_3_PERFORM,  DAY_4_PERFORM,  DAY_5_PERFORM,  DAY_6_PERFORM,  DAY_7_PERFORM, 
     DAY_8_PERFORM,  DAY_9_PERFORM,  DAY_10_PERFORM, DAY_11_PERFORM, DAY_12_PERFORM, DAY_13_PERFORM, DAY_14_PERFORM, 
     DAY_15_PERFORM, DAY_16_PERFORM, DAY_17_PERFORM, DAY_18_PERFORM, DAY_19_PERFORM, DAY_20_PERFORM, DAY_21_PERFORM, 
     DAY_22_PERFORM, DAY_23_PERFORM, DAY_24_PERFORM, DAY_25_PERFORM, DAY_26_PERFORM, DAY_27_PERFORM, DAY_28_PERFORM, 
     DAY_29_PERFORM, DAY_30_PERFORM, DAY_31_PERFORM, 
-    A_STATUS, ROW_TYPE
+    COUNT_PERFORM_INSERTED, TIME_PERFORM_INSERTED 
 )
-SELECT
-    @year   AS YEAR,
-    @month  AS MONTH,
+--Вставка заголовков.
+SELECT DISTINCT
+    @year           AS YEAR,
+    @month          AS MONTH,
     CARE_DIARY_OUID AS CARE_DIARY_OUID,
-    SERV_SDU        AS SERV_SDU,
-    EXECUTE_TIME    AS EXECUTE_TIME,
-    ISNULL(DAY_1, 0)  AS DAY_1,  ISNULL(DAY_2, 0)  AS DAY_2,  ISNULL(DAY_3, 0)  AS DAY_3,  ISNULL(DAY_4, 0)  AS DAY_4,  ISNULL(DAY_5, 0)  AS DAY_5,  ISNULL(DAY_6, 0)  AS DAY_6,  ISNULL(DAY_7, 0)  AS DAY_7,
-    ISNULL(DAY_8, 0)  AS DAY_8,  ISNULL(DAY_9, 0)  AS DAY_9,  ISNULL(DAY_10, 0) AS DAY_10, ISNULL(DAY_11, 0) AS DAY_11, ISNULL(DAY_12, 0) AS DAY_12, ISNULL(DAY_13, 0) AS DAY_13, ISNULL(DAY_14, 0) AS DAY_14, 
-    ISNULL(DAY_15, 0) AS DAY_15, ISNULL(DAY_16, 0) AS DAY_16, ISNULL(DAY_17, 0) AS DAY_17, ISNULL(DAY_18, 0) AS DAY_18, ISNULL(DAY_19, 0) AS DAY_19, ISNULL(DAY_20, 0) AS DAY_20, ISNULL(DAY_21, 0) AS DAY_21,
-    ISNULL(DAY_22, 0) AS DAY_22, ISNULL(DAY_23, 0) AS DAY_23, ISNULL(DAY_24, 0) AS DAY_24, ISNULL(DAY_25, 0) AS DAY_25, ISNULL(DAY_26, 0) AS DAY_26, ISNULL(DAY_27, 0) AS DAY_27, ISNULL(DAY_28, 0) AS DAY_28,
-    ISNULL(DAY_29, 0) AS DAY_29, ISNULL(DAY_30, 0) AS DAY_30, ISNULL(DAY_31, 0) AS DAY_31,
+    @activeStatus   AS A_STATUS,
+    1               AS ROW_TYPE,
+    --Функция SUM игнорирует NULL, поэтому на NULL не проверяем для производительности.
+    SUM(ISNULL(DAY_1, 0))  AS DAY_1_ALL,  SUM(ISNULL(DAY_2, 0))  AS DAY_2_ALL,  SUM(ISNULL(DAY_3, 0))  AS DAY_3_ALL,  
+    SUM(ISNULL(DAY_4, 0))  AS DAY_4_ALL,  SUM(ISNULL(DAY_5, 0))  AS DAY_5_ALL,  SUM(ISNULL(DAY_6, 0))  AS DAY_6_ALL,  
+    SUM(ISNULL(DAY_7, 0))  AS DAY_7_ALL,  SUM(ISNULL(DAY_8, 0))  AS DAY_8_ALL,  SUM(ISNULL(DAY_9, 0))  AS DAY_9_ALL,  
+    SUM(ISNULL(DAY_10, 0)) AS DAY_10_ALL, SUM(ISNULL(DAY_11, 0)) AS DAY_11_ALL, SUM(ISNULL(DAY_12, 0)) AS DAY_12_ALL, 
+    SUM(ISNULL(DAY_13, 0)) AS DAY_13_ALL, SUM(ISNULL(DAY_14, 0)) AS DAY_14_ALL, SUM(ISNULL(DAY_15, 0)) AS DAY_15_ALL, 
+    SUM(ISNULL(DAY_16, 0)) AS DAY_16_ALL, SUM(ISNULL(DAY_17, 0)) AS DAY_17_ALL, SUM(ISNULL(DAY_18, 0)) AS DAY_18_ALL, 
+    SUM(ISNULL(DAY_19, 0)) AS DAY_19_ALL, SUM(ISNULL(DAY_20, 0)) AS DAY_20_ALL, SUM(ISNULL(DAY_21, 0)) AS DAY_21_ALL, 
+    SUM(ISNULL(DAY_22, 0)) AS DAY_22_ALL, SUM(ISNULL(DAY_23, 0)) AS DAY_23_ALL, SUM(ISNULL(DAY_24, 0)) AS DAY_24_ALL, 
+    SUM(ISNULL(DAY_25, 0)) AS DAY_25_ALL, SUM(ISNULL(DAY_26, 0)) AS DAY_26_ALL, SUM(ISNULL(DAY_27, 0)) AS DAY_27_ALL, 
+    SUM(ISNULL(DAY_28, 0)) AS DAY_28_ALL, SUM(ISNULL(DAY_29, 0)) AS DAY_29_ALL, SUM(ISNULL(DAY_30, 0)) AS DAY_30_ALL, 
+    SUM(ISNULL(DAY_31, 0)) AS DAY_31_ALL,
+    SUM(ISNULL(DAY_1, 0)  + ISNULL(DAY_2, 0)  + ISNULL(DAY_3, 0) + ISNULL(DAY_4, 0)  + ISNULL(DAY_5, 0)  + ISNULL(DAY_6, 0)  + ISNULL(DAY_7, 0)  + 
+        ISNULL(DAY_8, 0)  + ISNULL(DAY_9, 0)  + ISNULL(DAY_10, 0) + ISNULL(DAY_11, 0) + ISNULL(DAY_12, 0) + ISNULL(DAY_13, 0) + ISNULL(DAY_14, 0) + 
+        ISNULL(DAY_15, 0) + ISNULL(DAY_16, 0) + ISNULL(DAY_17, 0) + ISNULL(DAY_18, 0) + ISNULL(DAY_19, 0) + ISNULL(DAY_20, 0) + ISNULL(DAY_21, 0) + 
+        ISNULL(DAY_22, 0) + ISNULL(DAY_23, 0) + ISNULL(DAY_24, 0) + ISNULL(DAY_25, 0) + ISNULL(DAY_26, 0) + ISNULL(DAY_27, 0) + ISNULL(DAY_28, 0) + 
+        ISNULL(DAY_29, 0) + ISNULL(DAY_30, 0) + ISNULL(DAY_31, 0)
+    ) AS COUNT_ALL_INSERTED,
+    SUM(EXECUTE_TIME * 
+        (ISNULL(DAY_1, 0)  + ISNULL(DAY_2, 0)  + ISNULL(DAY_3, 0) + ISNULL(DAY_4, 0)  + ISNULL(DAY_5, 0)  + ISNULL(DAY_6, 0)  + ISNULL(DAY_7, 0)  + 
+        ISNULL(DAY_8, 0)  + ISNULL(DAY_9, 0)  + ISNULL(DAY_10, 0) + ISNULL(DAY_11, 0) + ISNULL(DAY_12, 0) + ISNULL(DAY_13, 0) + ISNULL(DAY_14, 0) + 
+        ISNULL(DAY_15, 0) + ISNULL(DAY_16, 0) + ISNULL(DAY_17, 0) + ISNULL(DAY_18, 0) + ISNULL(DAY_19, 0) + ISNULL(DAY_20, 0) + ISNULL(DAY_21, 0) + 
+        ISNULL(DAY_22, 0) + ISNULL(DAY_23, 0) + ISNULL(DAY_24, 0) + ISNULL(DAY_25, 0) + ISNULL(DAY_26, 0) + ISNULL(DAY_27, 0) + ISNULL(DAY_28, 0) + 
+        ISNULL(DAY_29, 0) + ISNULL(DAY_30, 0) + ISNULL(DAY_31, 0))
+    )  AS TIME_ALL_INSERTED,
     0 AS DAY_1_PERFORM,  0 AS DAY_2_PERFORM,  0 AS DAY_3_PERFORM,  0 AS DAY_4_PERFORM,  0 AS DAY_5_PERFORM,  0 AS DAY_6_PERFORM,  0 AS DAY_7_PERFORM, 
     0 AS DAY_8_PERFORM,  0 AS DAY_9_PERFORM,  0 AS DAY_10_PERFORM, 0 AS DAY_11_PERFORM, 0 AS DAY_12_PERFORM, 0 AS DAY_13_PERFORM, 0 AS DAY_14_PERFORM, 
     0 AS DAY_15_PERFORM, 0 AS DAY_16_PERFORM, 0 AS DAY_17_PERFORM, 0 AS DAY_18_PERFORM, 0 AS DAY_19_PERFORM, 0 AS DAY_20_PERFORM, 0 AS DAY_21_PERFORM, 
     0 AS DAY_22_PERFORM, 0 AS DAY_23_PERFORM, 0 AS DAY_24_PERFORM, 0 AS DAY_25_PERFORM, 0 AS DAY_26_PERFORM, 0 AS DAY_27_PERFORM, 0 AS DAY_28_PERFORM, 
     0 AS DAY_29_PERFORM, 0 AS DAY_30_PERFORM, 0 AS DAY_31_PERFORM, 
-    10  AS A_STATUS,
-    2   AS ROW_TYPE
+    0 AS COUNT_PERFORM_INSERTED, 
+    0 AS TIME_PERFORM_INSERTED
+FROM #MONTH_PLAN 
+GROUP BY CARE_DIARY_OUID
+--Вставка данных по услугам.
+UNION ALL
+SELECT
+    @year           AS YEAR,
+    @month          AS MONTH,
+    CARE_DIARY_OUID AS CARE_DIARY_OUID,
+    SERV_SDU        AS SERV_SDU,
+    EXECUTE_TIME    AS EXECUTE_TIME,
+    @activeStatus   AS A_STATUS,
+    2               AS ROW_TYPE,
+    ISNULL(DAY_1, 0)  AS DAY_1,  ISNULL(DAY_2, 0)  AS DAY_2,  ISNULL(DAY_3, 0)  AS DAY_3,  ISNULL(DAY_4, 0)  AS DAY_4,  ISNULL(DAY_5, 0)  AS DAY_5,  ISNULL(DAY_6, 0)  AS DAY_6,  ISNULL(DAY_7, 0)  AS DAY_7,
+    ISNULL(DAY_8, 0)  AS DAY_8,  ISNULL(DAY_9, 0)  AS DAY_9,  ISNULL(DAY_10, 0) AS DAY_10, ISNULL(DAY_11, 0) AS DAY_11, ISNULL(DAY_12, 0) AS DAY_12, ISNULL(DAY_13, 0) AS DAY_13, ISNULL(DAY_14, 0) AS DAY_14, 
+    ISNULL(DAY_15, 0) AS DAY_15, ISNULL(DAY_16, 0) AS DAY_16, ISNULL(DAY_17, 0) AS DAY_17, ISNULL(DAY_18, 0) AS DAY_18, ISNULL(DAY_19, 0) AS DAY_19, ISNULL(DAY_20, 0) AS DAY_20, ISNULL(DAY_21, 0) AS DAY_21,
+    ISNULL(DAY_22, 0) AS DAY_22, ISNULL(DAY_23, 0) AS DAY_23, ISNULL(DAY_24, 0) AS DAY_24, ISNULL(DAY_25, 0) AS DAY_25, ISNULL(DAY_26, 0) AS DAY_26, ISNULL(DAY_27, 0) AS DAY_27, ISNULL(DAY_28, 0) AS DAY_28,
+    ISNULL(DAY_29, 0) AS DAY_29, ISNULL(DAY_30, 0) AS DAY_30, ISNULL(DAY_31, 0) AS DAY_31,
+    NULL AS COUNT_ALL_INSERTED,
+    NULL AS TIME_ALL_INSERTED,
+    0 AS DAY_1_PERFORM,  0 AS DAY_2_PERFORM,  0 AS DAY_3_PERFORM,  0 AS DAY_4_PERFORM,  0 AS DAY_5_PERFORM,  0 AS DAY_6_PERFORM,  0 AS DAY_7_PERFORM, 
+    0 AS DAY_8_PERFORM,  0 AS DAY_9_PERFORM,  0 AS DAY_10_PERFORM, 0 AS DAY_11_PERFORM, 0 AS DAY_12_PERFORM, 0 AS DAY_13_PERFORM, 0 AS DAY_14_PERFORM, 
+    0 AS DAY_15_PERFORM, 0 AS DAY_16_PERFORM, 0 AS DAY_17_PERFORM, 0 AS DAY_18_PERFORM, 0 AS DAY_19_PERFORM, 0 AS DAY_20_PERFORM, 0 AS DAY_21_PERFORM, 
+    0 AS DAY_22_PERFORM, 0 AS DAY_23_PERFORM, 0 AS DAY_24_PERFORM, 0 AS DAY_25_PERFORM, 0 AS DAY_26_PERFORM, 0 AS DAY_27_PERFORM, 0 AS DAY_28_PERFORM, 
+    0 AS DAY_29_PERFORM, 0 AS DAY_30_PERFORM, 0 AS DAY_31_PERFORM, 
+    NULL AS COUNT_PERFORM_INSERTED,  
+    NULL AS TIME_PERFORM_INSERTED
 FROM #MONTH_PLAN
 
 --------------------------------------------------------------------------------------------------------------------------------
