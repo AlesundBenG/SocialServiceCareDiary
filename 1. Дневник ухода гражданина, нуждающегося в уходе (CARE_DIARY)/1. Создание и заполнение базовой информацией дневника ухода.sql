@@ -19,8 +19,7 @@ CREATE TABLE #DESCRIPTOR_CREATION (
     IPPSU_DOCUMENT      INT,            --Идентификатор документа ИППСУ, для которой создан дневник.
     IPPSU_INFO          INT,            --Идентификатор содержимого ИППСУ.
     ADDITION_DOCUMENT   INT,            --Идентификатор документа дополнения к ИППСУ.
-    ADDITION_INFO       INT,            --Идентификатор содержимого дополнения.
-    CARE_DIARY_DOCUMENT INT,            --Идентификатор созданного документа дневника.      
+    ADDITION_INFO       INT,            --Идентификатор содержимого дополнения. 
     CARE_DIARY_INFO     INT,            --Идентификатор созданного содержимого дневника.
 )
 CREATE TABLE #CREATED (
@@ -59,7 +58,7 @@ WHERE socServ.A_STATUS = @activeStatus
 ------------------------------------------------------------------------------------------------------------------------------
 
 --Выбор документов ИППСУ, в соответствии которых формируются дневники.
-INSERT INTO #DESCRIPTOR_CREATION (GUID, SERV_DOCUMNET, SERV_INFO, IPPSU_DOCUMENT, IPPSU_INFO, ADDITION_DOCUMENT, ADDITION_INFO, CARE_DIARY_DOCUMENT, CARE_DIARY_INFO)
+INSERT INTO #DESCRIPTOR_CREATION (GUID, SERV_DOCUMNET, SERV_INFO, IPPSU_DOCUMENT, IPPSU_INFO, ADDITION_DOCUMENT, ADDITION_INFO, CARE_DIARY_INFO)
 SELECT
     NEWID()                 AS GUID,
     forCreate.SERV_DOCUMENT AS SERV_DOCUMNET,
@@ -68,7 +67,6 @@ SELECT
     IPPSU.A_OUID            AS IPPSU_INFO,
     documentAddition.OUID   AS ADDITION_DOCUMENT,
     addition.A_OUID         AS ADDITION_INFO,
-    NULL                    AS CARE_DIARY_DOCUMENT, --Вставляется значение после вставки записи.
     NULL                    AS CARE_DIARY_INFO --Вставляется значение после вставки записи.
 FROM #SOC_SERV_FOR_CREATE forCreate
 ----Содержимое назначения социального обслуживания.
@@ -93,46 +91,13 @@ FROM #SOC_SERV_FOR_CREATE forCreate
 
 ------------------------------------------------------------------------------------------------------------------------------
 
---Создание документов.
-INSERT INTO WM_ACTDOCUMENTS (GUID, A_CREATEDATE, A_STATUS, PERSONOUID, DOCUMENTSTYPE, ISSUEEXTENSIONSDATE, COMPLETIONSACTIONDATE, GIVEDOCUMENTORG, A_GIVEDOCUMENTORG_TEXT, A_DOCSTATUS)
-OUTPUT inserted.GUID, inserted.OUID , 'WM_ACTDOCUMENTS' INTO #CREATED (GUID, OUID, TABLE_NAME) --Записываем в лог вставленные записи.
-SELECT
-    descriptor.GUID                                                                             AS GUID,    --Для связки созданных записей с дескриптором.
-    GETDATE()                                                                                   AS A_CREATEDATE,
-    @activeStatus                                                                               AS A_STATUS,
-    documentServ.PERSONOUID                                                                     AS PERSONOUID,
-    @docTypeCareDiary                                                                           AS DOCUMENTSTYPE,
-    documentServ.ISSUEEXTENSIONSDATE                                                            AS ISSUEEXTENSIONSDATE,
-    dbo.fs_getMinDate(documentServ.COMPLETIONSACTIONDATE, documentIPPSU.COMPLETIONSACTIONDATE)  AS COMPLETIONSACTIONDATE,
-    documentServ.GIVEDOCUMENTORG                                                                AS GIVEDOCUMENTORG,
-    documentServ.A_GIVEDOCUMENTORG_TEXT                                                         AS A_GIVEDOCUMENTORG_TEXT,
-    documentServ.A_DOCSTATUS                                                                    AS A_DOCSTATUS
-FROM #DESCRIPTOR_CREATION descriptor --Дескриптор создания.
-----Содержимое данных документов.
-    INNER JOIN WM_ACTDOCUMENTS documentServ
-        ON documentServ.OUID = descriptor.SERV_DOCUMNET
-    INNER JOIN WM_ACTDOCUMENTS documentIPPSU
-        ON documentIPPSU.OUID = descriptor.IPPSU_DOCUMENT
-
---Запись вставленных идентификаторов.
-UPDATE descriptor
-SET descriptor.CARE_DIARY_DOCUMENT = created.OUID
-FROM #CREATED created --Созданные документы.
-----Дескриптор создания.
-    INNER JOIN #DESCRIPTOR_CREATION descriptor 
-        ON descriptor.GUID = created.GUID
-WHERE created.TABLE_NAME = 'WM_ACTDOCUMENTS'
-
-------------------------------------------------------------------------------------------------------------------------------
-
 --Создание содержимого дневника ухода.
-INSERT INTO CARE_DIARY (GUID, A_CREATEDATE, A_STATUS, DOCUMENT_OUID, DOCUMENT_ADDITION, DOCUMENT_SOC_SERV, SOC_SERV, LEVEL_OF_NEED, DOCUMENT_IPPSU)
+INSERT INTO CARE_DIARY (GUID, A_CREATEDATE, A_STATUS, DOCUMENT_ADDITION, DOCUMENT_SOC_SERV, SOC_SERV, LEVEL_OF_NEED, DOCUMENT_IPPSU)
 OUTPUT inserted.GUID, inserted.A_OUID , 'CARE_DIARY' INTO #CREATED (GUID, OUID, TABLE_NAME) --Записываем в лог вставленные записи.
 SELECT
-    NEWID()                         AS GUID,
+    descriptor.GUID                 AS GUID,
     GETDATE()                       AS A_CREATEDATE,
     @activeStatus                   AS A_STATUS,
-    descriptor.CARE_DIARY_DOCUMENT  AS DOCUMENT_OUID,
     descriptor.ADDITION_DOCUMENT    AS DOCUMENT_ADDITION, 
     descriptor.SERV_DOCUMNET        AS DOCUMENT_SOC_SERV, 
     descriptor.SERV_INFO            AS SOC_SERV,
@@ -147,12 +112,9 @@ FROM #DESCRIPTOR_CREATION descriptor --Дескриптор создания.
 UPDATE descriptor
 SET descriptor.CARE_DIARY_INFO = created.OUID
 FROM #CREATED created --Созданные документы.
-----Содержимое созданной записи.
-    INNER JOIN CARE_DIARY careDiary
-        ON careDiary.A_OUID = created.OUID
 ----Дескриптор создания.
     INNER JOIN #DESCRIPTOR_CREATION descriptor 
-        ON descriptor.CARE_DIARY_DOCUMENT = careDiary.DOCUMENT_OUID
+        ON descriptor.GUID = created.GUID
 WHERE created.TABLE_NAME = 'CARE_DIARY'
 
 ------------------------------------------------------------------------------------------------------------------------------
@@ -218,16 +180,13 @@ SELECT
     0                                               AS SUNDAY,
     descriptor.CARE_DIARY_INFO                      AS CARE_DIARY_OUID
 FROM #DESCRIPTOR_CREATION descriptor  --Дескриптор создания.
-----Документ дневника ухода.
-    INNER JOIN WM_ACTDOCUMENTS careDiary
-        ON careDiary.OUID = descriptor.CARE_DIARY_DOCUMENT
 ----Возможные номера посещения.
     CROSS JOIN (    
         SELECT 1 AS NUMBER 
         UNION SELECT 2 AS NUMBER 
         UNION SELECT 3 AS NUMBER 
     ) visit
-
+WHERE descriptor.CARE_DIARY_INFO IS NOT NULL
 
 --Простановка флагов посещения.
 UPDATE workPlan
