@@ -340,6 +340,7 @@ DECLARE @queryRecalculationBase     NVARCHAR(MAX) = (   --Базовый зап�
     FROM SX_OBJ_QUERY query
     WHERE query.A_CODE = 'updateCountSDUServsMonth'
 )
+SET @queryRecalculationBase = REPLACE(@queryRecalculationBase, 'select * from #CHANGES', '')
 
 --Запуск перерасчета.                         
 SET @recalculationCursor = CURSOR SCROLL FOR --Заполнение курсора.

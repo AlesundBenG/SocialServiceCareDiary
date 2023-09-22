@@ -91,7 +91,7 @@ FROM #SOC_SERV_FOR_CREATE forCreate
 ------------------------------------------------------------------------------------------------------------------------------
 
 --Создание содержимого дневника ухода.
-INSERT INTO CARE_DIARY (GUID, A_CREATEDATE, A_STATUS, DOCUMENT_ADDITION, DOCUMENT_SOC_SERV, SOC_SERV, LEVEL_OF_NEED, DOCUMENT_IPPSU)
+INSERT INTO CARE_DIARY (GUID, A_CREATEDATE, A_STATUS, DOCUMENT_ADDITION, DOCUMENT_SOC_SERV, SOC_SERV, LEVEL_OF_NEED, DOCUMENT_IPPSU, DAY_FOR_SHOW_PLAN)
 OUTPUT inserted.GUID, inserted.A_OUID , 'CARE_DIARY' INTO #CREATED (GUID, OUID, TABLE_NAME) --Записываем в лог вставленные записи.
 SELECT
     descriptor.GUID                 AS GUID,
@@ -101,7 +101,8 @@ SELECT
     descriptor.SERV_DOCUMNET        AS DOCUMENT_SOC_SERV, 
     descriptor.SERV_INFO            AS SOC_SERV,
     IPPSU.LEVEL_OF_NEED             AS LEVEL_OF_NEED,
-    descriptor.IPPSU_DOCUMENT       AS DOCUMENT_IPPSU
+    descriptor.IPPSU_DOCUMENT       AS DOCUMENT_IPPSU,
+    CONVERT(DATE, GETDATE())        AS DAY_FOR_SHOW_PLAN
 FROM #DESCRIPTOR_CREATION descriptor --Дескриптор создания.
 ----Содержимое ИППСУ.
     INNER JOIN INDIVID_PROGRAM IPPSU

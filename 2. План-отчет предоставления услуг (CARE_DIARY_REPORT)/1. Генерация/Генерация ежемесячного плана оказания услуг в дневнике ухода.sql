@@ -155,6 +155,18 @@ FROM CARE_DIARY careDiaryInfo --Информация дневника ухода
         ON servSDU.A_IPPSU_ADDITION = additionInfo.A_OUID
             AND servSDU.A_STATUS = @activeStatus
             AND ISNULL(servSDU.A_SOCSERV_NOT_NEED, 0) = 0
+----Услуги, оказываемые родственниками.
+    LEFT JOIN (
+        SELECT DISTINCT
+            A_IPPSU_ADDITION    AS ADDITION_OUID,
+            A_SOC_SERV          AS SERV_SDU
+        FROM SOCSERV_INDIVIDPROGRAM_ADDITION
+        WHERE A_STATUS = 10
+            AND A_SOC_SERV IS NOT NULL
+            AND ISNULL(A_RELATIVE, '') <> ''
+    ) servPerformedByRelative
+        ON servPerformedByRelative.ADDITION_OUID = additionInfo.A_OUID
+            AND servPerformedByRelative.SERV_SDU = servSDU.A_SOC_SERV
 ----План-отчет предоставления услуг СДУ из дневника ухода
     LEFT JOIN CARE_DIARY_REPORT report
         ON report.CARE_DIARY_OUID = careDiaryInfo.A_OUID
@@ -163,6 +175,7 @@ FROM CARE_DIARY careDiaryInfo --Информация дневника ухода
             AND report.MONTH = @month
 WHERE careDiaryInfo.A_STATUS = @activeStatus
     AND report.A_OUID IS NULL
+    AND servPerformedByRelative.SERV_SDU IS NULL
     AND careDiaryInfo.A_OUID IN (
         #careDiary#
     )
@@ -242,6 +255,8 @@ SELECT DISTINCT
     @year           AS YEAR,
     @month          AS MONTH,
     CARE_DIARY_OUID AS CARE_DIARY_OUID,
+    NULL            AS SERV_SDU, 
+    NULL            AS EXECUTE_TIME,
     @activeStatus   AS A_STATUS,
     1               AS ROW_TYPE,
     --Функция SUM игнорирует NULL, поэтому на NULL не проверяем для производительности.
