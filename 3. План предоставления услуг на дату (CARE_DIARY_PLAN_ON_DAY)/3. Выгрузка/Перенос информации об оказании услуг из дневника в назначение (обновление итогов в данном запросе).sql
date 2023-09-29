@@ -1,5 +1,18 @@
 --------------------------------------------------------------------------------------------------------------------------------
 
+/*
+Перенос информации об оказании услуг из дневника в назначение:
+    1. Сбор информации из дневника ухода, сгруппированные по назначениям, услугам, по дням и по сотрудникам.
+    2. Для выбранных записей выбираются агрегации услуг из назначений.
+    3. Из выбранных агрегаций выбираются ежедневные отчеты за нужные годы и месяцы по 1. выборке, сгруппированные по назначениям, услугам, по дням и по сотрудникам.
+    4. Удаляются те записи из выборки по дневнику и назначению, которые полностью совпадают (по сотруднику и по количеству).
+    5. Те записи, которые остались в выборке из назначения удаляются.
+    6. Те записи, которые остались в выборке из дневнкиа ухода вставляются в назначение, при этом вставляется еще период в агрегации, если отсутствует.
+    7. Производится перерасчет итоговых таблиц в назначениях с вставкой недостающих записей и удалением лишних.
+*/
+
+--------------------------------------------------------------------------------------------------------------------------------
+
 --Удаление временных таблиц.
 IF OBJECT_ID('tempdb..#FROM_CARE_DIARY_GROUPED')    IS NOT NULL BEGIN DROP TABLE #FROM_CARE_DIARY_GROUPED       END --Сгруппированные данные из ежедневного плана по назначению, услуге, дню и работнику.
 IF OBJECT_ID('tempdb..#FROM_SOC_SERV_AGR')          IS NOT NULL BEGIN DROP TABLE #FROM_SOC_SERV_AGR             END --Сопоставленные агрегации для данных из дневника.
@@ -337,10 +350,11 @@ WHERE fromCareDiary.LINK_TO_COUNT_OUID IS NULL
 ------------------------------------------------------------------------------------------------------------------------------
 
 --Вставка услуг, которые есть в дневнике, но которых нет в назначении.
-INSERT INTO SOC_WORK_EMPLOYMENT_SDU (GUID, A_CREATEDATE, A_SYSTEMCLASS, A_STATUS, A_DATE ,A_SERV_COUNT_NUMBER, A_SERV_COUNT_MINUTES, A_SOC_WORKER, A_SERV_COUNT, A_SERV_COST)
+INSERT INTO SOC_WORK_EMPLOYMENT_SDU (GUID, A_CREATEDATE, A_CROWNER, A_SYSTEMCLASS, A_STATUS, A_DATE ,A_SERV_COUNT_NUMBER, A_SERV_COUNT_MINUTES, A_SOC_WORKER, A_SERV_COUNT, A_SERV_COST)
 SELECT
     NEWID()                                             AS GUID,
     GETDATE()                                           AS A_CREATEDATE,
+    10314303                                            AS A_CROWNER,
     @dailyReportClass                                   AS A_SYSTEMCLASS,
     @activeStatus                                       AS A_STATUS,
     fromCareDiary.PERFORM_DATE                          AS A_DATE,
@@ -359,7 +373,7 @@ WHERE fromCareDiary.IN_BOTH_PLACES = 0
 --Выбор назначений для перерасчета.
 INSERT INTO #SOC_SERV_FOR_RECALCULATION (SOC_SERV_OUID, YEAR, MONTH)
 SELECT DISTINCT 
-    SOC_SERV_OUID       AS SOC_SERV_OUID , 
+    SOC_SERV_OUID       AS SOC_SERV_OUID, 
     YEAR(PERFORM_DATE)  AS YEAR, 
     MONTH(PERFORM_DATE) AS MONTH 
 FROM #FROM_CARE_DIARY_GROUPED 
@@ -464,7 +478,9 @@ WHERE countAll.A_ID IS NULL
 UPDATE countMonth
 SET countMonth.A_SOC_SERV_MONTH         = countCalculated.SERV_HOURS,
     countMonth.A_SOC_SERV_MONTH_MINUTES = countCalculated.SERV_MINUTES,
-    countMonth.A_SOC_SERV_MONTH_NUMBER  = countCalculated.SERV_COUNT
+    countMonth.A_SOC_SERV_MONTH_NUMBER  = countCalculated.SERV_COUNT,
+    countMonth.A_EDITOWNER              = 10314303,
+    countMonth.A_TS                     = GETDATE()
 FROM #COUNT_SERV_GROUPED_BY_EACH countCalculated --Количество услуг.
 ----Количество социальных услуг за месяц (СДУ).
     INNER JOIN WM_COUNT_SOC_SERV_MONTH countMonth
@@ -479,8 +495,10 @@ WHERE ISNULL(countMonth.A_SOC_SERV_MONTH, 0)  <> ISNULL(countCalculated.SERV_HOU
 
 --Обновление услуг за месяц в назначении.
 UPDATE countAll
-SET countAll.A_SOC_COUNT         = countCalculated.SERV_HOURS,
-    countAll.A_SOC_COUNT_NUMBER  = countCalculated.SERV_COUNT
+SET countAll.A_SOC_COUNT        = countCalculated.SERV_HOURS,
+    countAll.A_SOC_COUNT_NUMBER = countCalculated.SERV_COUNT,
+    countAll.A_EDITOWNER        = 10314303,
+    countAll.TS                 = GETDATE()
 FROM #COUNT_SERV_GROUPED_BY_ALL countCalculated --Количество услуг.
 ----Количество социальных услуг за месяц (СДУ).
     INNER JOIN WM_FACT_COUNT_SOC_SERV countAll
@@ -496,7 +514,7 @@ WHERE ISNULL(countAll.A_SOC_COUNT, 0) <> ISNULL(countCalculated.SERV_HOURS, 0)
 --Удаление строк количества услуг за месяц в агрегации, если в эти строки нечего вставить.
 UPDATE countMonth
 SET countMonth.A_STATUS     = @deleteStatus,
-    countMonth.A_EDITOWNER  = NULL,
+    countMonth.A_EDITOWNER  = 10314303,
     countMonth.A_TS         = GETDATE()
 FROM (SELECT DISTINCT SOC_SERV_OUID, YEAR, MONTH FROM #SOC_SERV_FOR_RECALCULATION) forRecalculation --Назначения для перерасчета.
 ----Агрегация по социальной услуге СДУ
@@ -519,7 +537,7 @@ WHERE countCalculated.AGR_OUID IS NULL
 --Удаление строк количества всех услуг за месяц, если в эти это строки нечего вставить.
 UPDATE countAll
 SET countAll.A_STATUS       = @deleteStatus,
-    countAll.A_EDITOWNER    = NULL,
+    countAll.A_EDITOWNER    = 10314303,
     countAll.TS             = GETDATE()
 FROM (SELECT DISTINCT SOC_SERV_OUID, YEAR, MONTH FROM #SOC_SERV_FOR_RECALCULATION) forRecalculation --Назначения для перерасчета.
 ----Количество (часов) всех оказанных услуг за месяц (СДУ).
@@ -534,5 +552,17 @@ FROM (SELECT DISTINCT SOC_SERV_OUID, YEAR, MONTH FROM #SOC_SERV_FOR_RECALCULATIO
             AND countCalculated.PERIOD_YEAR = countAll.A_YEAR
             AND countCalculated.PERIOD_MONTH = countAll.A_MONTH
 WHERE countCalculated.SOC_SERV_OUID IS NULL
+
+---------------------------------------------------------------------------------------------------------------------------------------------
+
+--SELECT * FROM #FROM_CARE_DIARY_GROUPED      --Сгруппированные данные из ежедневного плана по назначению, услуге, дню и работнику.
+--SELECT * FROM #FROM_SOC_SERV_AGR            --Сопоставленные агрегации для данных из дневника.
+--SELECT * FROM #FROM_SOC_SERV                --Данные из назначения.
+--SELECT * FROM #FROM_SOC_SERV_GROUPED        --Сгруппированные данные по назначению, услуге, дню и работнику.
+--SELECT * FROM #FOR_DELETE_FROM_SOC_SERV     --Несовпадающие записи для удаления из назначения.
+--SELECT * FROM #CREATEAD_PERIOD_FOR_SERV     --Созданные агрегации услуги по периоду.
+--SELECT * FROM #SOC_SERV_FOR_RECALCULATION   --Назначения для перерасчета агрегаций.
+--SELECT * FROM #COUNT_SERV_GROUPED_BY_EACH   --Количество оказанных услуг в месяц, которые сгруппированы в рамках каждой услуги в назначении.
+--SELECT * FROM #COUNT_SERV_GROUPED_BY_ALL    --Количество оказанных услуг в месяц, которые сгруппированы в рамках всех услуг в назначении.
 
 ---------------------------------------------------------------------------------------------------------------------------------------------
